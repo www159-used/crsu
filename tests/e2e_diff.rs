@@ -1,5 +1,6 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
+use httpmock::{Method::POST, MockServer};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -32,7 +33,7 @@ fn scenario_paths() -> Vec<std::path::PathBuf> {
 
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
-    let output = repository.run_crsu(&scenario.command);
+    let output = run_with_optional_crucible(&repository, scenario);
 
     assert_eq!(
         output.status.success(),
@@ -52,6 +53,30 @@ fn run_scenario(scenario: &Scenario) {
         &scenario.expect.stderr_contains,
         scenario,
     );
+}
+
+fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenario) -> Output {
+    let Some(crucible) = &scenario.crucible else {
+        return repository.run_crsu(&scenario.command, None);
+    };
+
+    let server = MockServer::start();
+    let create_review = server.mock(|when, then| {
+        when.method(POST)
+            .path("/rest-service/reviews-v1")
+            .query_param("FEAUTH", &crucible.token)
+            .body_contains("\"projectKey\":\"COMMON\"");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(format!(
+                r#"{{"permaId":{{"id":"{}"}}}}"#,
+                crucible.review_id
+            ));
+    });
+
+    let output = repository.run_crsu(&scenario.command, Some((&server, crucible)));
+    create_review.assert();
+    output
 }
 
 fn assert_contains_all(actual: &str, expected: &[String], scenario: &Scenario) {
@@ -96,12 +121,16 @@ impl ScenarioRepository {
         Self { repository }
     }
 
-    fn run_crsu(&self, arguments: &[String]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_crsu"))
-            .args(arguments)
-            .current_dir(self.repository.path())
-            .output()
-            .expect("run crsu")
+    fn run_crsu(&self, arguments: &[String], crucible: Option<(&MockServer, &Crucible)>) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_crsu"));
+        command.args(arguments).current_dir(self.repository.path());
+        if let Some((server, crucible)) = crucible {
+            command
+                .env("CRSU_CRUCIBLE_URL", server.base_url())
+                .env("CRSU_CRUCIBLE_PROJECT", &crucible.project)
+                .env("CRSU_CRUCIBLE_TOKEN", &crucible.token);
+        }
+        command.output().expect("run crsu")
     }
 }
 
@@ -137,7 +166,15 @@ struct Scenario {
     name: String,
     repository: Repository,
     command: Vec<String>,
+    crucible: Option<Crucible>,
     expect: Expectation,
+}
+
+#[derive(Deserialize)]
+struct Crucible {
+    project: String,
+    token: String,
+    review_id: String,
 }
 
 #[derive(Deserialize)]
