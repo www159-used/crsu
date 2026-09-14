@@ -27,6 +27,18 @@ cargo test
 cargo run -- doctor
 ```
 
+## 安装
+
+```bash
+./scripts/install.sh
+```
+
+默认安装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。若需要隔离安装目录：
+
+```bash
+./scripts/install.sh --root /path/to/install-root
+```
+
 声明式端到端场景在 `tests/e2e/**/*.yaml`；对应的 Rust runner 在
 `tests/e2e_*.rs`。每个 YAML 用例声明 Git 初始状态、待执行的命令和预期输出。
 
