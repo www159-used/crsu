@@ -1,0 +1,23 @@
+[package]
+name = "crsu"
+version = "0.1.0"
+edition = "2024"
+description = "A focused Git and Crucible review workflow CLI"
+license = "AGPL-3.0-or-later"
+keywords = ["git", "crucible", "code-review", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+
+[[bin]]
+name = "crsu"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
