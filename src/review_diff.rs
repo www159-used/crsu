@@ -6,6 +6,7 @@ pub struct ReviewDiff {
     base: String,
     commits: Vec<String>,
     patch: String,
+    title: String,
 }
 
 impl ReviewDiff {
@@ -22,6 +23,16 @@ impl ReviewDiff {
     #[must_use]
     pub fn patch_len(&self) -> usize {
         self.patch.len()
+    }
+
+    #[must_use]
+    pub fn patch(&self) -> &str {
+        &self.patch
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
     }
 }
 
@@ -40,10 +51,12 @@ pub fn from_current_repository(base: Option<&str>) -> Result<ReviewDiff, DiffErr
         return Err(DiffError::NoChanges { base });
     }
 
+    let title = git_output(["show", "-s", "--format=%s", "HEAD"])?;
     Ok(ReviewDiff {
         base,
         commits,
         patch,
+        title,
     })
 }
 

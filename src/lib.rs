@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::process::{Command as ProcessCommand, ExitCode};
 
+mod crucible;
 mod review_diff;
 
 #[derive(Debug, Parser)]
@@ -42,6 +43,14 @@ fn diff(base: Option<&str>) -> ExitCode {
             println!("Base: {}", review_diff.base());
             println!("Commits: {}", review_diff.commit_count());
             println!("Patch bytes: {}", review_diff.patch_len());
+            match crucible::submit_if_configured(&review_diff) {
+                Ok(Some(review_id)) => println!("Review: {review_id}"),
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("diff failed: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {

@@ -9,9 +9,14 @@ repository:
 command:
   - diff
   - main
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-123
 expect:
   success: true
   stdout_contains:
     - "Base: main"
     - "Commits: 1"
     - "Patch bytes: "
+    - "Review: COMMON-123"
