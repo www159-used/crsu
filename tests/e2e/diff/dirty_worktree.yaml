@@ -1,0 +1,17 @@
+name: dirty worktree is rejected before a patch is prepared
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  uncommitted_files:
+    uncommitted.txt: "dirty\n"
+command:
+  - diff
+  - main
+expect:
+  success: false
+  stderr_contains:
+    - "working tree has uncommitted changes"

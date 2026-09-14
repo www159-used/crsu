@@ -27,8 +27,8 @@ cargo test
 cargo run -- doctor
 ```
 
-人类可读的端到端验收场景在 `tests/e2e/*.feature`；对应的 Rust 可执行绑定在
-`tests/e2e_*.rs`。
+声明式端到端场景在 `tests/e2e/**/*.yaml`；对应的 Rust runner 在
+`tests/e2e_*.rs`。每个 YAML 用例声明 Git 初始状态、待执行的命令和预期输出。
 
 ## 非目标
 
