@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::process::{Command as ProcessCommand, ExitCode};
 
+mod review_diff;
+
 #[derive(Debug, Parser)]
 #[command(about = "Focused Git and Crucible review workflow")]
 pub struct Cli {
@@ -29,8 +31,23 @@ enum Command {
 pub fn run(cli: Cli) -> ExitCode {
     match cli.command {
         Command::Doctor => doctor(),
-        Command::Diff { base } => not_implemented("diff", base.as_deref()),
+        Command::Diff { base } => diff(base.as_deref()),
         Command::Land { target } => not_implemented("land", target.as_deref()),
+    }
+}
+
+fn diff(base: Option<&str>) -> ExitCode {
+    match review_diff::from_current_repository(base) {
+        Ok(review_diff) => {
+            println!("Base: {}", review_diff.base());
+            println!("Commits: {}", review_diff.commit_count());
+            println!("Patch bytes: {}", review_diff.patch_len());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("diff failed: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
