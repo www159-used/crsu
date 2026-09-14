@@ -1,4 +1,4 @@
-//! `crsu diff` 的人类可读端到端场景。
+//! 对 `e2e/diff.feature` 中场景的可执行绑定。
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 #[test]
 fn given_a_clean_feature_branch_when_diffing_against_main_then_it_reports_a_reviewable_patch() {
+    // 场景：干净的功能分支可以生成待审差异
     let feature_branch = FeatureBranch::with_one_commit();
 
     let result = feature_branch.run_crsu(["diff", "main"]);
@@ -19,6 +20,7 @@ fn given_a_clean_feature_branch_when_diffing_against_main_then_it_reports_a_revi
 
 #[test]
 fn given_an_uncommitted_file_when_diffing_then_it_refuses_to_create_an_unreproducible_patch() {
+    // 场景：存在未提交文件时拒绝生成待审差异
     let feature_branch = FeatureBranch::with_one_commit();
     std::fs::write(feature_branch.path().join("uncommitted.txt"), "dirty\n")
         .expect("write uncommitted file");

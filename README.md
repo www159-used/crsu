@@ -27,6 +27,9 @@ cargo test
 cargo run -- doctor
 ```
 
+人类可读的端到端验收场景在 `tests/e2e/*.feature`；对应的 Rust 可执行绑定在
+`tests/e2e_*.rs`。
+
 ## 非目标
 
 第一版不迁移 Jira、Jenkins、发布、tag、release note、cherry-pick/rebase、剪贴板，
