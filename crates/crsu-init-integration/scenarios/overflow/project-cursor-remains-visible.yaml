@@ -1,0 +1,13 @@
+name: project cursor remains visible in a long list
+screen: project
+items: 50
+cursor: 10
+terminal:
+  width: 100
+  height: 16
+expect:
+  visible_contains:
+    - PROJECT-11
+    - "› PROJECT-11"
+  visible_not_contains:
+    - PROJECT-01

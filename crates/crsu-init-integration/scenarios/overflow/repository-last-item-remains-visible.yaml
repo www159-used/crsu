@@ -1,0 +1,12 @@
+name: repository last item remains visible in a long list
+screen: repository
+items: 50
+cursor: 49
+terminal:
+  width: 100
+  height: 16
+expect:
+  visible_contains:
+    - repo-50
+  visible_not_contains:
+    - repo-01

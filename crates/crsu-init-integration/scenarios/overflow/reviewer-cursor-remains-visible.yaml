@@ -1,0 +1,12 @@
+name: reviewer candidate cursor remains visible in a long list
+screen: reviewer-candidates
+items: 50
+cursor: 10
+terminal:
+  width: 100
+  height: 16
+expect:
+  visible_contains:
+    - user-11
+  visible_not_contains:
+    - user-01

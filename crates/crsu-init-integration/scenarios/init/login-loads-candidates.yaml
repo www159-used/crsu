@@ -1,0 +1,18 @@
+name: successful sign-in loads sorted candidates and excludes the current user
+credentials:
+  username: alice
+  password: correct-horse
+token: test-token
+projects: [Z, A]
+repositories: [repo-z, repo-a]
+users:
+  - username: zoe
+    display_name: Zoe
+  - username: alice
+    display_name: Alice
+  - username: bob
+    display_name: Bob
+expect:
+  projects: [A, Z]
+  repositories: [repo-a, repo-z]
+  reviewers: [bob, zoe]

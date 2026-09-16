@@ -1,0 +1,13 @@
+name: selected reviewers remain inspectable when the selection overflows
+screen: selected-reviewers
+items: 50
+cursor: 0
+selected_reviewers: 12
+terminal:
+  width: 100
+  height: 16
+expect:
+  visible_contains:
+    - user-12
+  visible_not_contains:
+    - user-01

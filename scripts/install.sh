@@ -39,7 +39,8 @@ command -v cargo >/dev/null 2>&1 || {
 }
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-arguments=(install --path "$project_root" --locked --force)
+package_root="$project_root/crates/crsu"
+arguments=(install --path "$package_root" --locked --force)
 if [[ -n "$install_root" ]]; then
     arguments+=(--root "$install_root")
 fi
