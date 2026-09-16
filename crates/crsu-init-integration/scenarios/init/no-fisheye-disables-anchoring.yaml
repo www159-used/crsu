@@ -1,0 +1,23 @@
+name: Crucible without FishEye does not offer anchor repositories
+credentials:
+  username: alice
+  password: correct-horse
+token: test-token
+is_fisheye: false
+origin: ssh://alice@git.example.com:29418/log_parser2.git
+projects: [LP]
+repositories:
+  - name: logriver
+    scm_type: git
+    location: ssh://git@git.example.com:29418/log_parser2.git
+    enabled: true
+users:
+  - username: alice
+    display_name: Alice
+  - username: bob
+    display_name: Bob
+expect:
+  projects: [LP]
+  repositories: []
+  detected_repository: null
+  reviewers: [bob]

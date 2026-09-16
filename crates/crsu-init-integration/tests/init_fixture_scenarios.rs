@@ -1,5 +1,5 @@
 use crsu::init_test_support::load_candidates;
-use crsu_testkit::{FixtureUser, InitFixture, MockCrucible};
+use crsu_testkit::{FixtureRepository, FixtureUser, InitFixture, MockCrucible};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -15,10 +15,19 @@ struct User {
 }
 
 #[derive(Debug, Deserialize)]
+struct Repository {
+    name: String,
+    scm_type: String,
+    location: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct Expect {
     projects: Vec<String>,
     repositories: Vec<String>,
     reviewers: Vec<String>,
+    detected_repository: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -26,8 +35,10 @@ struct Scenario {
     name: String,
     credentials: Credentials,
     token: String,
+    is_fisheye: bool,
     projects: Vec<String>,
-    repositories: Vec<String>,
+    repositories: Vec<Repository>,
+    origin: String,
     users: Vec<User>,
     expect: Expect,
 }
@@ -43,8 +54,18 @@ fn init_fixture_scenarios_are_executable() {
             username: scenario.credentials.username.clone(),
             password: scenario.credentials.password.clone(),
             token: scenario.token.clone(),
+            is_fisheye: scenario.is_fisheye,
             projects: scenario.projects,
-            repositories: scenario.repositories,
+            repositories: scenario
+                .repositories
+                .into_iter()
+                .map(|repository| FixtureRepository {
+                    name: repository.name,
+                    scm_type: repository.scm_type,
+                    location: repository.location,
+                    enabled: repository.enabled,
+                })
+                .collect(),
             users: scenario
                 .users
                 .into_iter()
@@ -65,8 +86,19 @@ fn init_fixture_scenarios_are_executable() {
             scenario.name
         );
         assert_eq!(
-            candidates.repositories, scenario.expect.repositories,
+            candidates
+                .repositories
+                .iter()
+                .map(|repository| repository.name.clone())
+                .collect::<Vec<_>>(),
+            scenario.expect.repositories,
             "{} repositories",
+            scenario.name
+        );
+        assert_eq!(
+            candidates.detected_repository(&scenario.origin),
+            scenario.expect.detected_repository.as_deref(),
+            "{} detected repository",
             scenario.name
         );
         assert_eq!(

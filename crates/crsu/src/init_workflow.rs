@@ -1,9 +1,9 @@
-use crate::crucible::{Client, User};
+use crate::crucible::{Client, RepositoryCandidate, User};
 
 pub(crate) struct Candidates {
     pub(crate) token: String,
     pub(crate) projects: Vec<String>,
-    pub(crate) repositories: Vec<String>,
+    pub(crate) repositories: Vec<RepositoryCandidate>,
     pub(crate) reviewers: Vec<User>,
 }
 
@@ -19,9 +19,11 @@ pub(crate) fn load_candidates(
     if projects.is_empty() {
         return Err("Crucible returned no projects".to_owned());
     }
-    let repositories = client
-        .repository_names()
-        .map_err(|error| error.to_string())?;
+    let repositories = if client.has_fisheye().map_err(|error| error.to_string())? {
+        client.repositories().map_err(|error| error.to_string())?
+    } else {
+        Vec::new()
+    };
     let reviewers = client
         .users()
         .map_err(|error| error.to_string())?
@@ -34,4 +36,19 @@ pub(crate) fn load_candidates(
         repositories,
         reviewers,
     })
+}
+
+pub(crate) fn detected_repository<'a>(
+    remote_url: &str,
+    repositories: &'a [RepositoryCandidate],
+) -> Option<&'a RepositoryCandidate> {
+    if remote_url.trim().is_empty() {
+        return None;
+    }
+    let mut matches = repositories.iter().filter(|repository| {
+        repository.scm_type.eq_ignore_ascii_case("git")
+            && crate::git_repository::git_remotes_match(&repository.location, remote_url)
+    });
+    let recommendation = matches.next()?;
+    matches.next().is_none().then_some(recommendation)
 }

@@ -1,4 +1,4 @@
-name: clean feature branch produces a reviewable patch
+name: existing review receives the patch and follows the Git subject
 repository:
   base_branch: main
   base_files:
@@ -6,6 +6,10 @@ repository:
   feature_branch: feature
   feature_files:
     README.md: "feature\n"
+  feature_message: |-
+    fix: current Git title
+
+    Url: http://crucible/cru/COMMON-123
 command:
   - diff
   - main
@@ -14,10 +18,9 @@ crucible:
   repository: java-common
   token: test-token
   review_id: COMMON-123
+  current_title: "fix: old review title"
+  new_title: "fix: current Git title"
 expect:
   success: true
   stdout_contains:
-    - "Base: main"
-    - "Commits: 1"
-    - "Patch bytes: "
     - "Review: COMMON-123"

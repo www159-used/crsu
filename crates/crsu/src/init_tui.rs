@@ -1,6 +1,6 @@
-use crate::crucible::User;
+use crate::crucible::{RepositoryCandidate, User};
 use crate::init_model::{FormFlow, InputMode};
-use crate::init_workflow::load_candidates;
+use crate::init_workflow::{detected_repository, load_candidates};
 use crate::project_config::{CrucibleConfig, ProjectConfig};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::prelude::*;
@@ -228,6 +228,7 @@ struct App {
     token: String,
     projects: Vec<String>,
     repositories: Vec<String>,
+    repository_candidates: Vec<RepositoryCandidate>,
     users: Vec<User>,
     project: usize,
     repository: usize,
@@ -253,6 +254,7 @@ impl App {
             token: String::new(),
             projects: vec![],
             repositories: vec!["(no anchor)".to_owned()],
+            repository_candidates: vec![],
             users: vec![],
             project: 0,
             repository: 0,
@@ -359,21 +361,49 @@ impl App {
     }
     fn login(&mut self) -> Result<(), String> {
         let candidates = load_candidates(&self.url, &self.username, &self.password)?;
+        let origin_url = crate::git_repository::Repository::discover()
+            .ok()
+            .and_then(|repository| repository.origin_url());
+        let detected = origin_url
+            .as_deref()
+            .and_then(|origin| detected_repository(origin, &candidates.repositories))
+            .map(|repository| repository.name.clone());
         self.token = candidates.token;
         self.projects = candidates.projects;
-        self.repositories.extend(candidates.repositories);
+        self.repositories = std::iter::once("(no anchor)".to_owned())
+            .chain(
+                candidates
+                    .repositories
+                    .iter()
+                    .map(|repository| repository.name.clone()),
+            )
+            .collect();
+        self.repository = detected
+            .as_ref()
+            .and_then(|name| {
+                self.repositories
+                    .iter()
+                    .position(|candidate| candidate == name)
+            })
+            .unwrap_or(0);
+        self.repository_candidates = candidates.repositories;
         self.users = candidates.reviewers;
         Ok(())
     }
     fn save(&self) -> Result<(), String> {
         ProjectConfig {
-            schema_version: 1,
+            schema_version: crate::project_config::CURRENT_SCHEMA_VERSION,
             crucible: CrucibleConfig {
                 url: self.url.clone(),
                 token: self.token.clone(),
                 project: self.projects[self.project].clone(),
                 repository: (self.repository > 0)
                     .then(|| self.repositories[self.repository].clone()),
+                repository_location: self
+                    .repository
+                    .checked_sub(1)
+                    .and_then(|index| self.repository_candidates.get(index))
+                    .map(|repository| repository.location.clone()),
                 reviewers: self.reviewers.clone(),
             },
         }

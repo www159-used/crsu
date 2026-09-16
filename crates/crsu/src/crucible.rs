@@ -1,4 +1,4 @@
-use crate::review_diff::ReviewDiff;
+use crate::git_repository::ReviewDiff;
 use serde_json::{Value, json};
 use std::env;
 use std::fmt;
@@ -12,6 +12,13 @@ pub struct Client {
 pub struct User {
     pub username: String,
     pub display_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RepositoryCandidate {
+    pub name: String,
+    pub scm_type: String,
+    pub location: String,
 }
 
 impl Client {
@@ -30,11 +37,8 @@ impl Client {
             ))
             .form(&[("userName", username), ("password", password)])
             .send()
-            .map_err(CrucibleError::Request)?
-            .error_for_status()
-            .map_err(CrucibleError::Request)?
-            .text()
-            .map_err(CrucibleError::Request)?;
+            .map_err(request_error)?;
+        let response = response_body(response)?;
         let response = parse_json(&response)?;
         response
             .get("token")
@@ -47,8 +51,38 @@ impl Client {
         self.get_names("/rest-service/projects-v1", "/projectData", "key")
     }
 
-    pub fn repository_names(&self) -> Result<Vec<String>, CrucibleError> {
-        self.get_names("/rest-service/repositories-v1", "/repoData", "name")
+    pub fn has_fisheye(&self) -> Result<bool, CrucibleError> {
+        self.get("/rest-service-fecru/server-v1")?
+            .get("isFishEye")
+            .and_then(Value::as_bool)
+            .ok_or(CrucibleError::MalformedCandidates)
+    }
+
+    pub fn repositories(&self) -> Result<Vec<RepositoryCandidate>, CrucibleError> {
+        let response = self.get("/rest-service/repositories-v1")?;
+        let values = response
+            .pointer("/repoData")
+            .and_then(Value::as_array)
+            .ok_or(CrucibleError::MalformedCandidates)?;
+        let mut repositories = values
+            .iter()
+            .filter(|value| {
+                value
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+            })
+            .filter_map(|value| {
+                Some(RepositoryCandidate {
+                    name: value.get("name")?.as_str()?.to_owned(),
+                    scm_type: value.get("type")?.as_str()?.to_owned(),
+                    location: value.get("location")?.as_str()?.to_owned(),
+                })
+            })
+            .collect::<Vec<_>>();
+        repositories.sort_by(|left, right| left.name.cmp(&right.name));
+        repositories.dedup_by(|left, right| left.name == right.name);
+        Ok(repositories)
     }
 
     pub fn users(&self) -> Result<Vec<User>, CrucibleError> {
@@ -102,11 +136,8 @@ impl Client {
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .query(&[("FEAUTH", &self.token)])
             .send()
-            .map_err(CrucibleError::Request)?
-            .error_for_status()
-            .map_err(CrucibleError::Request)?
-            .text()
-            .map_err(CrucibleError::Request)?;
+            .map_err(request_error)?;
+        let response = response_body(response)?;
         let response = parse_json(&response)?;
         Ok(response)
     }
@@ -119,34 +150,82 @@ fn parse_json(body: &str) -> Result<Value, CrucibleError> {
     })
 }
 
+fn response_body(response: reqwest::blocking::Response) -> Result<String, CrucibleError> {
+    let status = response.status();
+    let body = response.text().map_err(request_error)?;
+    if status.is_success() {
+        return Ok(body);
+    }
+
+    Err(CrucibleError::HttpResponse {
+        status,
+        detail: error_detail(&body),
+    })
+}
+
+fn error_detail(body: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        let code = value.get("code").and_then(Value::as_str);
+        let message = value.get("message").and_then(Value::as_str);
+        return match (code, message) {
+            (Some(code), Some(message)) => format!("{code}: {message}"),
+            (Some(code), None) => code.to_owned(),
+            (None, Some(message)) => message.to_owned(),
+            (None, None) => value.to_string(),
+        };
+    }
+
+    let preview = body.chars().take(200).collect::<String>();
+    if preview.is_empty() {
+        "empty response body".to_owned()
+    } else {
+        preview
+    }
+}
+
+fn request_error(error: reqwest::Error) -> CrucibleError {
+    CrucibleError::Request(error.without_url())
+}
+
 pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<String>, CrucibleError> {
     let Some(config) = Config::from_environment()? else {
         return Ok(None);
     };
+    config.validate_anchor()?;
+
+    if let Some(review_id) = review_diff.review_id() {
+        update_review(&config, review_id, review_diff)?;
+        return Ok(Some(review_id.to_owned()));
+    }
+
+    let mut payload = json!({
+        "reviewData": {
+            "projectKey": config.project,
+            "name": review_diff.title(),
+        },
+        "patch": review_diff.patch(),
+    });
+    if let Some(repository) = &config.repository {
+        payload["anchor"] = json!({"anchorRepository": repository});
+    }
 
     let response = reqwest::blocking::Client::new()
         .post(format!("{}/rest-service/reviews-v1", config.url))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .query(&[("FEAUTH", &config.token)])
-        .json(&json!({
-            "reviewData": {
-                "projectKey": config.project,
-                "name": review_diff.title(),
-            },
-            "patch": review_diff.patch(),
-        }))
+        .json(&payload)
         .send()
-        .map_err(CrucibleError::Request)?
-        .error_for_status()
-        .map_err(CrucibleError::Request)?
-        .json::<Value>()
-        .map_err(CrucibleError::Request)?;
+        .map_err(request_error)?;
+    let response = response_body(response)?;
+    let response = parse_json(&response)?;
 
     let review_id = response
         .pointer("/permaId/id")
         .and_then(Value::as_str)
         .ok_or(CrucibleError::MalformedResponse)?;
     for reviewer in config.reviewers {
-        reqwest::blocking::Client::new()
+        let reviewer_response = reqwest::blocking::Client::new()
             .post(format!(
                 "{}/rest-service/reviews-v1/{review_id}/reviewers",
                 config.url
@@ -154,17 +233,83 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<String>, 
             .query(&[("FEAUTH", &config.token)])
             .body(reviewer)
             .send()
-            .map_err(CrucibleError::Request)?
-            .error_for_status()
-            .map_err(CrucibleError::Request)?;
+            .map_err(request_error)?;
+        response_body(reviewer_response)?;
     }
     Ok(Some(review_id.to_owned()))
+}
+
+fn update_review(
+    config: &Config,
+    review_id: &str,
+    review_diff: &ReviewDiff,
+) -> Result<(), CrucibleError> {
+    let review = reqwest::blocking::Client::new()
+        .get(format!(
+            "{}/rest-service/reviews-v1/{review_id}",
+            config.url
+        ))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .query(&[("FEAUTH", &config.token)])
+        .send()
+        .map_err(request_error)?;
+    let review = parse_json(&response_body(review)?)?;
+    let current_title = review
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or(CrucibleError::MalformedResponse)?;
+
+    let mut payload = json!({"patch": review_diff.patch()});
+    if let Some(repository) = &config.repository {
+        payload["anchor"] = json!({"anchorRepository": repository});
+    }
+    let patch = reqwest::blocking::Client::new()
+        .post(format!(
+            "{}/rest-service/reviews-v1/{review_id}/patch",
+            config.url
+        ))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .query(&[("FEAUTH", &config.token)])
+        .json(&payload)
+        .send()
+        .map_err(request_error)?;
+    response_body(patch)?;
+
+    if current_title != review_diff.title() {
+        update_review_title(config, review_id, review_diff.title())?;
+    }
+    Ok(())
+}
+
+fn update_review_title(config: &Config, review_id: &str, title: &str) -> Result<(), CrucibleError> {
+    let response = reqwest::blocking::Client::new()
+        .post(format!(
+            "{}/json/cru/{review_id}/updateReviewTitleAjax",
+            config.url
+        ))
+        .header("X-Atlassian-Token", "no-check")
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .query(&[("FEAUTH", &config.token)])
+        .form(&[("title", title), ("adgified", "true")])
+        .send()
+        .map_err(request_error)?;
+    let response = parse_json(&response_body(response)?)?;
+    if response.get("worked").and_then(Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(CrucibleError::TitleUpdateRejected)
+    }
 }
 
 struct Config {
     url: String,
     project: String,
     token: String,
+    repository: Option<String>,
+    repository_location: Option<String>,
     reviewers: Vec<String>,
 }
 
@@ -173,6 +318,8 @@ impl Config {
         let url = env::var("CRSU_CRUCIBLE_URL").ok();
         let project = env::var("CRSU_CRUCIBLE_PROJECT").ok();
         let token = env::var("CRSU_CRUCIBLE_TOKEN").ok();
+        let repository = env::var("CRSU_CRUCIBLE_REPOSITORY").ok();
+        let repository_location = env::var("CRSU_CRUCIBLE_REPOSITORY_LOCATION").ok();
         if url.is_none() && project.is_none() && token.is_none() {
             return crate::project_config::ProjectConfig::load()
                 .map_err(CrucibleError::ProjectConfiguration)
@@ -181,6 +328,8 @@ impl Config {
                         url: config.crucible.url,
                         project: config.crucible.project,
                         token: config.crucible.token,
+                        repository: config.crucible.repository,
+                        repository_location: config.crucible.repository_location,
                         reviewers: config.crucible.reviewers,
                     })
                 });
@@ -189,8 +338,35 @@ impl Config {
             url: required("CRSU_CRUCIBLE_URL", url)?,
             project: required("CRSU_CRUCIBLE_PROJECT", project)?,
             token: required("CRSU_CRUCIBLE_TOKEN", token)?,
+            repository,
+            repository_location,
             reviewers: Vec::new(),
         }))
+    }
+
+    fn validate_anchor(&self) -> Result<(), CrucibleError> {
+        let (Some(repository), Some(expected_remote)) =
+            (&self.repository, &self.repository_location)
+        else {
+            return Ok(());
+        };
+        let actual_remote = crate::git_repository::Repository::discover()
+            .map_err(|error| CrucibleError::ProjectConfiguration(error.to_string()))?
+            .origin_url()
+            .ok_or_else(|| CrucibleError::AnchorMismatch {
+                repository: repository.clone(),
+                expected: expected_remote.clone(),
+                actual: "no origin remote".to_owned(),
+            })?;
+        if crate::git_repository::git_remotes_match(expected_remote, &actual_remote) {
+            Ok(())
+        } else {
+            Err(CrucibleError::AnchorMismatch {
+                repository: repository.clone(),
+                expected: expected_remote.clone(),
+                actual: actual_remote,
+            })
+        }
     }
 }
 
@@ -204,8 +380,18 @@ pub enum CrucibleError {
     MalformedLogin,
     InvalidJson(String),
     MalformedCandidates,
+    TitleUpdateRejected,
     MissingConfiguration(&'static str),
     ProjectConfiguration(String),
+    AnchorMismatch {
+        repository: String,
+        expected: String,
+        actual: String,
+    },
+    HttpResponse {
+        status: reqwest::StatusCode,
+        detail: String,
+    },
     Request(reqwest::Error),
 }
 
@@ -220,9 +406,23 @@ impl fmt::Display for CrucibleError {
             Self::MalformedCandidates => {
                 write!(formatter, "Crucible returned no usable candidates")
             }
+            Self::TitleUpdateRejected => {
+                write!(formatter, "Crucible did not update the review title")
+            }
             Self::MissingConfiguration(name) => write!(formatter, "missing {name}"),
             Self::ProjectConfiguration(error) => {
                 write!(formatter, "project configuration failed: {error}")
+            }
+            Self::AnchorMismatch {
+                repository,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "FishEye repository {repository} tracks {expected}, but Git origin is {actual}; run crsu init to select the matching repository"
+            ),
+            Self::HttpResponse { status, detail } => {
+                write!(formatter, "Crucible rejected request ({status}): {detail}")
             }
             Self::Request(error) => write!(formatter, "Crucible request failed: {error}"),
         }
@@ -231,9 +431,36 @@ impl fmt::Display for CrucibleError {
 
 #[cfg(test)]
 mod tests {
-    use super::Client;
+    use super::{Client, Config, update_review_title};
     use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
+
+    #[test]
+    fn updates_review_title_through_crucible_ajax() {
+        let server = MockServer::start();
+        let update = server.mock(|when, then| {
+            when.method(POST)
+                .path("/json/cru/LP-1472/updateReviewTitleAjax")
+                .query_param("FEAUTH", "test-token")
+                .header("x-atlassian-token", "no-check")
+                .body_contains("title=fix%3A+new+title")
+                .body_contains("adgified=true");
+            then.status(200)
+                .json_body(serde_json::json!({"worked":true,"title":"fix: new title"}));
+        });
+        let config = Config {
+            url: server.base_url(),
+            project: "LP".to_owned(),
+            token: "test-token".to_owned(),
+            repository: None,
+            repository_location: None,
+            reviewers: Vec::new(),
+        };
+
+        update_review_title(&config, "LP-1472", "fix: new title").expect("update title");
+
+        update.assert();
+    }
 
     #[test]
     fn reads_project_and_repository_candidates_with_the_login_token() {
@@ -250,13 +477,20 @@ mod tests {
             when.method(GET)
                 .path("/rest-service/repositories-v1")
                 .query_param("FEAUTH", "test-token");
-            then.status(200)
-                .json_body(serde_json::json!({"repoData":[{"name":"repo-b"},{"name":"repo-a"}]}));
+            then.status(200).json_body(serde_json::json!({"repoData":[
+                {"name":"repo-b","type":"git","location":"ssh://git/repo-b.git","enabled":true},
+                {"name":"repo-a","type":"git","location":"ssh://git/repo-a.git","enabled":true}
+            ]}));
         });
         let client = Client::new(&server.base_url(), "test-token".to_owned());
         assert_eq!(client.project_keys().expect("projects"), ["A", "Z"]);
         assert_eq!(
-            client.repository_names().expect("repositories"),
+            client
+                .repositories()
+                .expect("repositories")
+                .iter()
+                .map(|repository| repository.name.as_str())
+                .collect::<Vec<_>>(),
             ["repo-a", "repo-b"]
         );
         projects.assert();

@@ -3,8 +3,22 @@ credentials:
   username: alice
   password: correct-horse
 token: test-token
+is_fisheye: true
 projects: [Z, A]
-repositories: [repo-z, repo-a]
+origin: ssh://alice@git.example.com:29418/log_parser2.git
+repositories:
+  - name: repo-z
+    scm_type: git
+    location: ssh://git@git.example.com:29418/other.git
+    enabled: true
+  - name: disabled-match
+    scm_type: git
+    location: ssh://git@git.example.com:29418/log_parser2.git
+    enabled: false
+  - name: logriver
+    scm_type: git
+    location: ssh://git@git.example.com:29418/log_parser2
+    enabled: true
 users:
   - username: zoe
     display_name: Zoe
@@ -14,5 +28,6 @@ users:
     display_name: Bob
 expect:
   projects: [A, Z]
-  repositories: [repo-a, repo-z]
+  repositories: [logriver, repo-z]
+  detected_repository: logriver
   reviewers: [bob, zoe]

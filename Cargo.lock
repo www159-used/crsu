@@ -662,6 +662,7 @@ name = "crsu"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "crsu-testkit",
  "httpmock",
  "ratatui",
  "reqwest",

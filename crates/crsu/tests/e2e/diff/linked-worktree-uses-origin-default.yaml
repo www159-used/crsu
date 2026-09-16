@@ -1,0 +1,18 @@
+name: linked worktree without upstream uses the origin default branch
+repository:
+  base_branch: main
+  origin:
+    default_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  linked_worktree: true
+  feature_files:
+    README.md: "feature\n"
+command:
+  - diff
+expect:
+  success: true
+  stdout_contains:
+    - "Base: origin/HEAD"
+    - "Commits: 1"

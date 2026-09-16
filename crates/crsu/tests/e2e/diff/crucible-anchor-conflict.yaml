@@ -1,0 +1,24 @@
+name: Crucible rejection explains the anchor failure without leaking credentials
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command:
+  - diff
+  - main
+crucible:
+  project: COMMON
+  repository: wrong-repository
+  token: secret-token-must-not-leak
+  response:
+    status: 409
+    body: '{"code":"PatchAnchorFailed","message":"Patch cannot be anchored to wrong-repository"}'
+expect:
+  success: false
+  stderr_contains:
+    - "409 Conflict"
+    - "PatchAnchorFailed"
+    - "Patch cannot be anchored to wrong-repository"

@@ -1,6 +1,6 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
-use httpmock::{Method::POST, MockServer};
+use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -53,6 +53,14 @@ fn run_scenario(scenario: &Scenario) {
         &scenario.expect.stderr_contains,
         scenario,
     );
+    if let Some(crucible) = &scenario.crucible {
+        let output = format!("{}{}", text(&output.stdout), text(&output.stderr));
+        assert!(
+            !output.contains(&crucible.token),
+            "scenario '{}' leaked the Crucible token in command output",
+            scenario.name
+        );
+    }
 }
 
 fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenario) -> Output {
@@ -60,22 +68,31 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
         return repository.run_crsu(&scenario.command, None);
     };
 
-    let server = MockServer::start();
-    let create_review = server.mock(|when, then| {
-        when.method(POST)
-            .path("/rest-service/reviews-v1")
-            .query_param("FEAUTH", &crucible.token)
-            .body_contains("\"projectKey\":\"COMMON\"");
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(format!(
-                r#"{{"permaId":{{"id":"{}"}}}}"#,
-                crucible.review_id
-            ));
+    let server = MockCrucible::start_review(ReviewFixture {
+        token: crucible.token.clone(),
+        project: crucible.project.clone(),
+        repository: crucible.repository.clone(),
+        response: crucible.response.as_ref().map_or_else(
+            || {
+                let review_id = crucible.review_id.clone().expect("successful review id");
+                match &crucible.current_title {
+                    None => ReviewResponse::Created { review_id },
+                    Some(current_title) => ReviewResponse::Updated {
+                        review_id,
+                        current_title: current_title.clone(),
+                        new_title: crucible.new_title.clone().expect("updated review title"),
+                    },
+                }
+            },
+            |response| ReviewResponse::Rejected {
+                status: response.status,
+                body: response.body.clone(),
+            },
+        ),
     });
 
     let output = repository.run_crsu(&scenario.command, Some((&server, crucible)));
-    create_review.assert();
+    server.assert_review_request();
     output
 }
 
@@ -90,7 +107,10 @@ fn assert_contains_all(actual: &str, expected: &[String], scenario: &Scenario) {
 }
 
 struct ScenarioRepository {
-    repository: TempDir,
+    _repository: TempDir,
+    _worktree: Option<TempDir>,
+    _origin: Option<TempDir>,
+    working_directory: std::path::PathBuf,
 }
 
 impl ScenarioRepository {
@@ -109,26 +129,88 @@ impl ScenarioRepository {
         run_git(repository.path(), ["add", "."]);
         run_git(repository.path(), ["commit", "-m", "base"]);
 
-        run_git(
-            repository.path(),
-            ["checkout", "-b", &specification.feature_branch],
-        );
-        write_files(repository.path(), &specification.feature_files);
-        run_git(repository.path(), ["add", "."]);
-        run_git(repository.path(), ["commit", "-m", "feature change"]);
-        write_files(repository.path(), &specification.uncommitted_files);
+        let origin = specification.origin.as_ref().map(|origin| {
+            let remote = TempDir::new().expect("create origin repository");
+            run_git(remote.path(), ["init", "--bare"]);
+            run_git(
+                repository.path(),
+                [
+                    "remote",
+                    "add",
+                    "origin",
+                    remote.path().to_str().expect("origin path is UTF-8"),
+                ],
+            );
+            run_git(
+                repository.path(),
+                ["push", "-u", "origin", &specification.base_branch],
+            );
+            run_git(
+                remote.path(),
+                [
+                    "symbolic-ref",
+                    "HEAD",
+                    &format!("refs/heads/{}", origin.default_branch),
+                ],
+            );
+            run_git(
+                repository.path(),
+                ["remote", "set-head", "origin", "--auto"],
+            );
+            remote
+        });
 
-        Self { repository }
+        let (worktree, working_directory) = if specification.linked_worktree {
+            let worktree = TempDir::new().expect("create linked worktree directory");
+            run_git(
+                repository.path(),
+                [
+                    "worktree",
+                    "add",
+                    "-b",
+                    &specification.feature_branch,
+                    worktree.path().to_str().expect("worktree path is UTF-8"),
+                ],
+            );
+            let path = worktree.path().to_path_buf();
+            (Some(worktree), path)
+        } else {
+            run_git(
+                repository.path(),
+                ["checkout", "-b", &specification.feature_branch],
+            );
+            (None, repository.path().to_path_buf())
+        };
+        write_files(&working_directory, &specification.feature_files);
+        run_git(&working_directory, ["add", "."]);
+        let feature_message = specification
+            .feature_message
+            .as_deref()
+            .unwrap_or("feature change");
+        run_git(&working_directory, ["commit", "-m", feature_message]);
+        write_files(&working_directory, &specification.uncommitted_files);
+
+        Self {
+            _repository: repository,
+            _worktree: worktree,
+            _origin: origin,
+            working_directory,
+        }
     }
 
-    fn run_crsu(&self, arguments: &[String], crucible: Option<(&MockServer, &Crucible)>) -> Output {
+    fn run_crsu(
+        &self,
+        arguments: &[String],
+        crucible: Option<(&MockCrucible, &Crucible)>,
+    ) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_crsu"));
-        command.args(arguments).current_dir(self.repository.path());
+        command.args(arguments).current_dir(&self.working_directory);
         if let Some((server, crucible)) = crucible {
             command
                 .env("CRSU_CRUCIBLE_URL", server.base_url())
                 .env("CRSU_CRUCIBLE_PROJECT", &crucible.project)
-                .env("CRSU_CRUCIBLE_TOKEN", &crucible.token);
+                .env("CRSU_CRUCIBLE_TOKEN", &crucible.token)
+                .env("CRSU_CRUCIBLE_REPOSITORY", &crucible.repository);
         }
         command.output().expect("run crsu")
     }
@@ -173,8 +255,18 @@ struct Scenario {
 #[derive(Deserialize)]
 struct Crucible {
     project: String,
+    repository: String,
     token: String,
-    review_id: String,
+    review_id: Option<String>,
+    current_title: Option<String>,
+    new_title: Option<String>,
+    response: Option<CrucibleResponse>,
+}
+
+#[derive(Deserialize)]
+struct CrucibleResponse {
+    status: u16,
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -183,8 +275,17 @@ struct Repository {
     base_files: BTreeMap<String, String>,
     feature_branch: String,
     feature_files: BTreeMap<String, String>,
+    feature_message: Option<String>,
+    #[serde(default)]
+    linked_worktree: bool,
+    origin: Option<Origin>,
     #[serde(default)]
     uncommitted_files: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct Origin {
+    default_branch: String,
 }
 
 #[derive(Deserialize)]
