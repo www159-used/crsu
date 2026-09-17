@@ -1,34 +1,16 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
+use super::common::load_yaml;
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
-#[test]
-fn diff_scenarios_are_executable() {
-    for scenario_path in scenario_paths() {
-        let scenario: Scenario = serde_yaml::from_str(
-            &std::fs::read_to_string(&scenario_path).expect("read scenario file"),
-        )
-        .expect("parse scenario file");
-        run_scenario(&scenario);
-    }
-}
-
-fn scenario_paths() -> Vec<std::path::PathBuf> {
-    let mut paths = std::fs::read_dir("tests/e2e/diff")
-        .expect("read scenario directory")
-        .map(|entry| entry.expect("read scenario entry").path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "yaml")
-        })
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
+pub fn run(path: &Path) {
+    run_scenario(&load_yaml(path, "diff scenario"));
 }
 
 fn run_scenario(scenario: &Scenario) {
@@ -53,6 +35,16 @@ fn run_scenario(scenario: &Scenario) {
         &scenario.expect.stderr_contains,
         scenario,
     );
+    let subject = repository.git_output(["show", "-s", "--format=%s", "HEAD"]);
+    if let Some(expected) = &scenario.expect.head_subject {
+        assert_eq!(
+            &subject, expected,
+            "scenario '{}' HEAD subject",
+            scenario.name
+        );
+    }
+    let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
+    assert_contains_all(&body, &scenario.expect.head_body_contains, scenario);
     if let Some(crucible) = &scenario.crucible {
         let output = format!("{}{}", text(&output.stdout), text(&output.stderr));
         assert!(
@@ -70,8 +62,6 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
 
     let server = MockCrucible::start_review(ReviewFixture {
         token: crucible.token.clone(),
-        project: crucible.project.clone(),
-        repository: crucible.repository.clone(),
         response: crucible.response.as_ref().map_or_else(
             || {
                 let review_id = crucible.review_id.clone().expect("successful review id");
@@ -80,7 +70,14 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
                     Some(current_title) => ReviewResponse::Updated {
                         review_id,
                         current_title: current_title.clone(),
-                        new_title: crucible.new_title.clone().expect("updated review title"),
+                        current_objectives: crucible
+                            .current_objectives
+                            .clone()
+                            .expect("updated review requires current_objectives"),
+                        current_state: crucible
+                            .current_state
+                            .clone()
+                            .unwrap_or_else(|| "Draft".to_owned()),
                     },
                 }
             },
@@ -93,6 +90,24 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
 
     let output = repository.run_crsu(&scenario.command, Some((&server, crucible)));
     server.assert_review_request();
+    if let Some(expected) = &scenario.expect.review {
+        let actual = server.review();
+        assert_eq!(
+            actual.title, expected.title,
+            "scenario '{}' title",
+            scenario.name
+        );
+        assert_eq!(
+            actual.objectives, expected.objectives,
+            "scenario '{}' objectives",
+            scenario.name
+        );
+        assert_eq!(
+            actual.state, expected.state,
+            "scenario '{}' state",
+            scenario.name
+        );
+    }
     output
 }
 
@@ -187,7 +202,10 @@ impl ScenarioRepository {
             .feature_message
             .as_deref()
             .unwrap_or("feature change");
-        run_git(&working_directory, ["commit", "-m", feature_message]);
+        run_git(
+            &working_directory,
+            ["commit", "--allow-empty", "-m", feature_message],
+        );
         write_files(&working_directory, &specification.uncommitted_files);
 
         Self {
@@ -203,17 +221,62 @@ impl ScenarioRepository {
         arguments: &[String],
         crucible: Option<(&MockCrucible, &Crucible)>,
     ) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_crsu"));
+        let mut command = Command::new(crsu_binary());
         command.args(arguments).current_dir(&self.working_directory);
         if let Some((server, crucible)) = crucible {
             command
                 .env("CRSU_CRUCIBLE_URL", server.base_url())
                 .env("CRSU_CRUCIBLE_PROJECT", &crucible.project)
                 .env("CRSU_CRUCIBLE_TOKEN", &crucible.token)
-                .env("CRSU_CRUCIBLE_REPOSITORY", &crucible.repository);
+                .env("CRSU_CRUCIBLE_REVIEWERS", crucible.reviewers.join(","));
+            if let Some(repository) = &crucible.repository {
+                command.env("CRSU_CRUCIBLE_REPOSITORY", repository);
+            } else {
+                command.env_remove("CRSU_CRUCIBLE_REPOSITORY");
+            }
         }
         command.output().expect("run crsu")
     }
+
+    fn git_output<const N: usize>(&self, arguments: [&str; N]) -> String {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(&self.working_directory)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            text(&output.stderr)
+        );
+        text(&output.stdout).trim().to_owned()
+    }
+}
+
+fn crsu_binary() -> &'static Path {
+    static BINARY: OnceLock<std::path::PathBuf> = OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .expect("workspace root");
+            let status = Command::new("cargo")
+                .args(["build", "--quiet", "-p", "crsu", "--bin", "crsu"])
+                .current_dir(workspace)
+                .status()
+                .expect("build crsu binary for E2E tests");
+            assert!(status.success(), "building crsu binary failed");
+
+            let profile = std::env::current_exe()
+                .expect("current E2E executable")
+                .parent()
+                .and_then(Path::parent)
+                .expect("Cargo profile directory")
+                .to_path_buf();
+            profile.join(format!("crsu{}", std::env::consts::EXE_SUFFIX))
+        })
+        .as_path()
 }
 
 fn write_files(repository: &Path, files: &BTreeMap<String, String>) {
@@ -255,11 +318,14 @@ struct Scenario {
 #[derive(Deserialize)]
 struct Crucible {
     project: String,
-    repository: String,
+    repository: Option<String>,
     token: String,
+    #[serde(default)]
+    reviewers: Vec<String>,
     review_id: Option<String>,
     current_title: Option<String>,
-    new_title: Option<String>,
+    current_objectives: Option<String>,
+    current_state: Option<String>,
     response: Option<CrucibleResponse>,
 }
 
@@ -295,4 +361,15 @@ struct Expectation {
     stdout_contains: Vec<String>,
     #[serde(default)]
     stderr_contains: Vec<String>,
+    head_subject: Option<String>,
+    #[serde(default)]
+    head_body_contains: Vec<String>,
+    review: Option<ExpectedReview>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct ExpectedReview {
+    title: String,
+    objectives: String,
+    state: String,
 }

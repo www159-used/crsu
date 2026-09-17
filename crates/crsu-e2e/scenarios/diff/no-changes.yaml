@@ -1,0 +1,12 @@
+name: an empty feature commit is rejected because it has no patch
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files: {}
+command: [diff, main]
+expect:
+  success: false
+  stderr_contains:
+    - "no changes relative to main"

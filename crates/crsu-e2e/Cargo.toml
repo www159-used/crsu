@@ -1,0 +1,23 @@
+[package]
+name = "crsu-e2e"
+version.workspace = true
+edition.workspace = true
+description = "Declarative end-to-end scenarios for crsu workflows"
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+crsu = { workspace = true, features = ["test-support"] }
+crsu-testkit.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+tempfile.workspace = true
+libtest-mimic = "0.8.2"
+
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+harness = false
+
+[lints]
+workspace = true

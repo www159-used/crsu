@@ -1,0 +1,12 @@
+name: vim modes edit text and navigation can return to authentication
+render:
+  kind: form-flow
+  actions:
+    - enter-insert
+    - exit-insert
+    - advance
+    - advance
+    - back
+expect:
+  mode: normal
+  step: authentication

@@ -187,21 +187,70 @@ fn request_error(error: reqwest::Error) -> CrucibleError {
     CrucibleError::Request(error.without_url())
 }
 
-pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<String>, CrucibleError> {
+pub struct Submission {
+    review_id: String,
+    review_url: String,
+    created: bool,
+    reviewers: Vec<String>,
+    title_update: Option<TitleUpdate>,
+}
+
+struct TitleUpdate {
+    previous: String,
+    current: String,
+}
+
+impl Submission {
+    #[must_use]
+    pub fn review_id(&self) -> &str {
+        &self.review_id
+    }
+
+    #[must_use]
+    pub fn review_url(&self) -> &str {
+        &self.review_url
+    }
+
+    #[must_use]
+    pub fn was_created(&self) -> bool {
+        self.created
+    }
+
+    #[must_use]
+    pub fn reviewers(&self) -> &[String] {
+        &self.reviewers
+    }
+
+    #[must_use]
+    pub fn title_update(&self) -> Option<(&str, &str)> {
+        self.title_update
+            .as_ref()
+            .map(|update| (update.previous.as_str(), update.current.as_str()))
+    }
+}
+
+pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submission>, CrucibleError> {
     let Some(config) = Config::from_environment()? else {
         return Ok(None);
     };
     config.validate_anchor()?;
 
     if let Some(review_id) = review_diff.review_id() {
-        update_review(&config, review_id, review_diff)?;
-        return Ok(Some(review_id.to_owned()));
+        let title_update = update_review(&config, review_id, review_diff)?;
+        return Ok(Some(Submission {
+            review_id: review_id.to_owned(),
+            review_url: format!("{}/cru/{review_id}", config.url),
+            created: false,
+            reviewers: config.reviewers,
+            title_update,
+        }));
     }
 
     let mut payload = json!({
         "reviewData": {
             "projectKey": config.project,
             "name": review_diff.title(),
+            "description": review_diff.objectives(),
         },
         "patch": review_diff.patch(),
     });
@@ -209,10 +258,12 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<String>, 
         payload["anchor"] = json!({"anchorRepository": repository});
     }
 
-    let response = reqwest::blocking::Client::new()
+    let response = config
+        .http
         .post(format!("{}/rest-service/reviews-v1", config.url))
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
         .query(&[("FEAUTH", &config.token)])
         .json(&payload)
         .send()
@@ -224,27 +275,59 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<String>, 
         .pointer("/permaId/id")
         .and_then(Value::as_str)
         .ok_or(CrucibleError::MalformedResponse)?;
-    for reviewer in config.reviewers {
-        let reviewer_response = reqwest::blocking::Client::new()
+    for reviewer in &config.reviewers {
+        let reviewer_response = config
+            .http
             .post(format!(
                 "{}/rest-service/reviews-v1/{review_id}/reviewers",
                 config.url
             ))
             .query(&[("FEAUTH", &config.token)])
-            .body(reviewer)
+            .body(reviewer.clone())
             .send()
             .map_err(request_error)?;
         response_body(reviewer_response)?;
     }
-    Ok(Some(review_id.to_owned()))
+    if !config.reviewers.is_empty() {
+        start_review(&config, review_id)?;
+    }
+    Ok(Some(Submission {
+        review_id: review_id.to_owned(),
+        review_url: format!("{}/cru/{review_id}", config.url),
+        created: true,
+        reviewers: config.reviewers,
+        title_update: None,
+    }))
+}
+
+fn start_review(config: &Config, review_id: &str) -> Result<(), CrucibleError> {
+    let response = config
+        .http
+        .post(format!(
+            "{}/rest-service/reviews-v1/{review_id}/transition",
+            config.url
+        ))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .query(&[
+            ("action", "action:approveReview"),
+            ("FEAUTH", config.token.as_str()),
+        ])
+        .body(" ")
+        .send()
+        .map_err(request_error)?;
+    response_body(response)?;
+    Ok(())
 }
 
 fn update_review(
     config: &Config,
     review_id: &str,
     review_diff: &ReviewDiff,
-) -> Result<(), CrucibleError> {
-    let review = reqwest::blocking::Client::new()
+) -> Result<Option<TitleUpdate>, CrucibleError> {
+    let review = config
+        .http
         .get(format!(
             "{}/rest-service/reviews-v1/{review_id}",
             config.url
@@ -259,12 +342,18 @@ fn update_review(
         .get("name")
         .and_then(Value::as_str)
         .ok_or(CrucibleError::MalformedResponse)?;
+    let is_draft = review.get("state").and_then(Value::as_str) == Some("Draft");
+    let current_objectives = review
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
 
     let mut payload = json!({"patch": review_diff.patch()});
     if let Some(repository) = &config.repository {
         payload["anchor"] = json!({"anchorRepository": repository});
     }
-    let patch = reqwest::blocking::Client::new()
+    let patch = config
+        .http
         .post(format!(
             "{}/rest-service/reviews-v1/{review_id}/patch",
             config.url
@@ -277,34 +366,63 @@ fn update_review(
         .map_err(request_error)?;
     response_body(patch)?;
 
-    if current_title != review_diff.title() {
-        update_review_title(config, review_id, review_diff.title())?;
+    let title = if current_title == review_diff.title() {
+        None
+    } else {
+        update_review_ajax(
+            config,
+            review_id,
+            "updateReviewTitleAjax",
+            &[("title", review_diff.title()), ("adgified", "true")],
+            CrucibleError::TitleUpdateRejected,
+        )?;
+        Some(TitleUpdate {
+            previous: current_title.to_owned(),
+            current: review_diff.title().to_owned(),
+        })
+    };
+    if current_objectives != review_diff.objectives() {
+        update_review_ajax(
+            config,
+            review_id,
+            "updateReviewObjectivesAjax",
+            &[("input", review_diff.objectives())],
+            CrucibleError::ObjectivesUpdateRejected,
+        )?;
     }
-    Ok(())
+    if is_draft && !config.reviewers.is_empty() {
+        start_review(config, review_id)?;
+    }
+    Ok(title)
 }
 
-fn update_review_title(config: &Config, review_id: &str, title: &str) -> Result<(), CrucibleError> {
-    let response = reqwest::blocking::Client::new()
-        .post(format!(
-            "{}/json/cru/{review_id}/updateReviewTitleAjax",
-            config.url
-        ))
+fn update_review_ajax(
+    config: &Config,
+    review_id: &str,
+    endpoint: &str,
+    form: &[(&str, &str)],
+    rejected: CrucibleError,
+) -> Result<(), CrucibleError> {
+    let response = config
+        .http
+        .post(format!("{}/json/cru/{review_id}/{endpoint}", config.url))
         .header("X-Atlassian-Token", "no-check")
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .query(&[("FEAUTH", &config.token)])
-        .form(&[("title", title), ("adgified", "true")])
+        .form(form)
         .send()
         .map_err(request_error)?;
     let response = parse_json(&response_body(response)?)?;
     if response.get("worked").and_then(Value::as_bool) == Some(true) {
         Ok(())
     } else {
-        Err(CrucibleError::TitleUpdateRejected)
+        Err(rejected)
     }
 }
 
 struct Config {
+    http: reqwest::blocking::Client,
     url: String,
     project: String,
     token: String,
@@ -320,11 +438,23 @@ impl Config {
         let token = env::var("CRSU_CRUCIBLE_TOKEN").ok();
         let repository = env::var("CRSU_CRUCIBLE_REPOSITORY").ok();
         let repository_location = env::var("CRSU_CRUCIBLE_REPOSITORY_LOCATION").ok();
+        let reviewers = env::var("CRSU_CRUCIBLE_REVIEWERS")
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         if url.is_none() && project.is_none() && token.is_none() {
             return crate::project_config::ProjectConfig::load()
                 .map_err(CrucibleError::ProjectConfiguration)
                 .map(|config| {
                     config.map(|config| Self {
+                        http: reqwest::blocking::Client::new(),
                         url: config.crucible.url,
                         project: config.crucible.project,
                         token: config.crucible.token,
@@ -335,12 +465,13 @@ impl Config {
                 });
         }
         Ok(Some(Self {
+            http: reqwest::blocking::Client::new(),
             url: required("CRSU_CRUCIBLE_URL", url)?,
             project: required("CRSU_CRUCIBLE_PROJECT", project)?,
             token: required("CRSU_CRUCIBLE_TOKEN", token)?,
             repository,
             repository_location,
-            reviewers: Vec::new(),
+            reviewers,
         }))
     }
 
@@ -381,6 +512,7 @@ pub enum CrucibleError {
     InvalidJson(String),
     MalformedCandidates,
     TitleUpdateRejected,
+    ObjectivesUpdateRejected,
     MissingConfiguration(&'static str),
     ProjectConfiguration(String),
     AnchorMismatch {
@@ -409,6 +541,9 @@ impl fmt::Display for CrucibleError {
             Self::TitleUpdateRejected => {
                 write!(formatter, "Crucible did not update the review title")
             }
+            Self::ObjectivesUpdateRejected => {
+                write!(formatter, "Crucible did not update the review objectives")
+            }
             Self::MissingConfiguration(name) => write!(formatter, "missing {name}"),
             Self::ProjectConfiguration(error) => {
                 write!(formatter, "project configuration failed: {error}")
@@ -431,36 +566,9 @@ impl fmt::Display for CrucibleError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Client, Config, update_review_title};
+    use super::Client;
     use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
-
-    #[test]
-    fn updates_review_title_through_crucible_ajax() {
-        let server = MockServer::start();
-        let update = server.mock(|when, then| {
-            when.method(POST)
-                .path("/json/cru/LP-1472/updateReviewTitleAjax")
-                .query_param("FEAUTH", "test-token")
-                .header("x-atlassian-token", "no-check")
-                .body_contains("title=fix%3A+new+title")
-                .body_contains("adgified=true");
-            then.status(200)
-                .json_body(serde_json::json!({"worked":true,"title":"fix: new title"}));
-        });
-        let config = Config {
-            url: server.base_url(),
-            project: "LP".to_owned(),
-            token: "test-token".to_owned(),
-            repository: None,
-            repository_location: None,
-            reviewers: Vec::new(),
-        };
-
-        update_review_title(&config, "LP-1472", "fix: new title").expect("update title");
-
-        update.assert();
-    }
 
     #[test]
     fn reads_project_and_repository_candidates_with_the_login_token() {

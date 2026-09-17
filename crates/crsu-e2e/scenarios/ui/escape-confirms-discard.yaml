@@ -1,0 +1,9 @@
+name: escape asks before discarding init setup
+render:
+  kind: exit-confirmation
+  terminal: { width: 100, height: 24 }
+expect:
+  visible_contains:
+    - Discard setup?
+    - "Enter/y: discard"
+    - "Esc/n: continue"

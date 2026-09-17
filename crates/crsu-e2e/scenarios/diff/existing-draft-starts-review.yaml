@@ -1,0 +1,36 @@
+name: updating a draft starts review when default reviewers exist
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "updated\n"
+  feature_message: |-
+    fix: update draft review
+
+    Url: http://crucible/cru/COMMON-123
+command: [diff, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers: [alice]
+  review_id: COMMON-123
+  current_title: "fix: update draft review"
+  current_objectives: |-
+    [ branch: feature ]
+    [ target: main ]
+    [ last_tag: None ]
+  current_state: Draft
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-123"
+  review:
+    title: "fix: update draft review"
+    objectives: |-
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review

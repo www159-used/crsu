@@ -9,6 +9,8 @@ repository:
   feature_message: |-
     fix: current Git title
 
+    Summary: explain the updated patch
+
     Url: http://crucible/cru/COMMON-123
 command:
   - diff
@@ -19,8 +21,22 @@ crucible:
   token: test-token
   review_id: COMMON-123
   current_title: "fix: old review title"
-  new_title: "fix: current Git title"
+  current_objectives: |-
+    [ branch: feature ]
+    [ target: main ]
+    [ last_tag: None ]
+  current_state: Draft
 expect:
   success: true
   stdout_contains:
     - "Review: COMMON-123"
+    - "Title updated: fix: old review title -> fix: current Git title"
+  review:
+    title: "fix: current Git title"
+    objectives: |-
+      explain the updated patch
+
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Draft

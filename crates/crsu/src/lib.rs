@@ -119,6 +119,9 @@ enum Command {
     Diff {
         /// 作为比较基线的 Git ref；默认使用当前 upstream。
         base: Option<String>,
+        /// 将当前 HEAD 关联到已经存在的 Crucible review。
+        #[arg(long, value_name = "REVIEW_ID", conflicts_with = "base")]
+        attach: Option<String>,
     },
     /// 将当前分支合入可选的目标分支。
     Land {
@@ -178,7 +181,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Init => init_tui::run(),
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
-        Command::Diff { base } => diff(base.as_deref()),
+        Command::Diff { base, attach } => diff(base.as_deref(), attach.as_deref()),
         Command::Land { target } => not_implemented("land", target.as_deref()),
     }
 }
@@ -260,7 +263,7 @@ fn config(command: ConfigCommand) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn diff(base: Option<&str>) -> ExitCode {
+fn diff(base: Option<&str>, attach: Option<&str>) -> ExitCode {
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -268,19 +271,74 @@ fn diff(base: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(review_id) = attach {
+        return attach_review(&repository, review_id);
+    }
     match repository.review_diff(base) {
         Ok(review_diff) => {
             println!("Base: {}", review_diff.base());
             println!("Commits: {}", review_diff.commit_count());
             println!("Patch bytes: {}", review_diff.patch_len());
             match crucible::submit_if_configured(&review_diff) {
-                Ok(Some(review_id)) => println!("Review: {review_id}"),
+                Ok(Some(submission)) => {
+                    println!("Review: {}", submission.review_id());
+                    if let Some((previous, current)) = submission.title_update() {
+                        println!("Title updated: {previous} -> {current}");
+                    }
+                    if submission.was_created()
+                        && let Err(error) = repository
+                            .attach_review(submission.review_url(), submission.reviewers())
+                    {
+                        eprintln!(
+                            "diff failed: review {} was created, but Git association failed: {error}",
+                            submission.review_id()
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
                 Ok(None) => {}
                 Err(error) => {
                     eprintln!("diff failed: {error}");
                     return ExitCode::FAILURE;
                 }
             }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("diff failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn attach_review(repository: &git_repository::Repository, review_id: &str) -> ExitCode {
+    if review_id.is_empty()
+        || !review_id.contains('-')
+        || !review_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        eprintln!("diff failed: invalid Crucible review id {review_id:?}");
+        return ExitCode::FAILURE;
+    }
+    let config = match project_config::ProjectConfig::load() {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            eprintln!("diff failed: project is not initialized; run `crsu init`");
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("diff failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let review_url = format!(
+        "{}/cru/{review_id}",
+        config.crucible.url.trim_end_matches('/')
+    );
+    match repository.attach_review(&review_url, &config.crucible.reviewers) {
+        Ok(()) => {
+            println!("Attached: {review_id}");
             ExitCode::SUCCESS
         }
         Err(error) => {

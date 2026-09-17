@@ -1,0 +1,9 @@
+name: a missing required URL explains how to continue
+render:
+  kind: required-field-error
+  terminal: { width: 100, height: 24 }
+expect:
+  visible_contains:
+    - Required field
+    - Crucible URL is required
+    - "Enter/Esc: continue editing"

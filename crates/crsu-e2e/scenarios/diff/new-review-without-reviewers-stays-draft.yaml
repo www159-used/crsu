@@ -1,0 +1,23 @@
+name: a new review without reviewers remains a draft
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command: [diff, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  review_id: COMMON-124
+expect:
+  success: true
+  review:
+    title: feature change
+    objectives: |-
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Draft

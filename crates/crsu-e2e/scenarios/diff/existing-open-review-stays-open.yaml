@@ -1,0 +1,34 @@
+name: updating an open review does not repeat the draft transition
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "updated again\n"
+  feature_message: |-
+    fix: update open review
+
+    Url: http://crucible/cru/COMMON-123
+command: [diff, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers: [alice]
+  review_id: COMMON-123
+  current_title: "fix: update open review"
+  current_objectives: |-
+    [ branch: feature ]
+    [ target: main ]
+    [ last_tag: None ]
+  current_state: Review
+expect:
+  success: true
+  review:
+    title: "fix: update open review"
+    objectives: |-
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review

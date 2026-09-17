@@ -62,6 +62,56 @@ reviewers = ["alice"]
     assert!(!saved.contains("repository_location ="));
 }
 
+#[test]
+fn diff_attach_preserves_subject_and_records_the_review_url() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    git(repository.path(), &["init", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test User"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "test@example.com"],
+    );
+    std::fs::write(repository.path().join("README.md"), "content\n").expect("write file");
+    git(repository.path(), &["add", "README.md"]);
+    git(
+        repository.path(),
+        &["commit", "-q", "-m", "fix: keep this subject"],
+    );
+    let config_dir = repository.path().join(".git/crsu");
+    std::fs::create_dir_all(&config_dir).expect("create config directory");
+    std::fs::write(
+        config_dir.join("config.toml"),
+        r#"schema_version = 2
+
+[crucible]
+url = "http://crucible"
+token = "secret"
+project = "LP"
+reviewers = ["alice", "bob"]
+"#,
+    )
+    .expect("write config");
+
+    let output = crsu()
+        .current_dir(repository.path())
+        .args(["diff", "--attach", "LP-1475"])
+        .output()
+        .expect("attach review");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let subject = git_text(repository.path(), &["show", "-s", "--format=%s", "HEAD"]);
+    let body = git_text(repository.path(), &["show", "-s", "--format=%b", "HEAD"]);
+    assert_eq!(subject, "fix: keep this subject");
+    assert!(body.contains("Summary:"));
+    assert!(body.contains("Reviewers: alice, bob"));
+    assert!(body.contains("Reviewed By:"));
+    assert!(body.contains("Url: http://crucible/cru/LP-1475"));
+}
+
 fn git(repository: &std::path::Path, args: &[&str]) {
     let status = Command::new("git")
         .current_dir(repository)
@@ -69,6 +119,19 @@ fn git(repository: &std::path::Path, args: &[&str]) {
         .status()
         .expect("run git");
     assert!(status.success());
+}
+
+fn git_text(repository: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(repository)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .expect("UTF-8 git output")
+        .trim()
+        .to_owned()
 }
 
 #[test]

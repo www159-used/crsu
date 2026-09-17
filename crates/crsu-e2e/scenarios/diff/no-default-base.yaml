@@ -1,0 +1,14 @@
+name: a branch without upstream or origin requires an explicit base
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command: [diff]
+expect:
+  success: false
+  stderr_contains:
+    - "no upstream or origin default branch"
+    - "crsu diff origin/main"

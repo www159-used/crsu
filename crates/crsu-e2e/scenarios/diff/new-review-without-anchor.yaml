@@ -1,0 +1,25 @@
+name: a review can be created without a FishEye anchor
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command: [diff, main]
+crucible:
+  project: COMMON
+  token: test-token
+  reviewers: [alice]
+  review_id: COMMON-125
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-125"
+  review:
+    title: feature change
+    objectives: |-
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review

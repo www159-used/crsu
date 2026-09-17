@@ -1,0 +1,9 @@
+name: authentication submission shows progress before the request finishes
+render:
+  kind: login-dialog
+  terminal: { width: 100, height: 24 }
+expect:
+  visible_contains:
+    - Signing in and loading candidates...
+    - Loading
+    - -- NORMAL --

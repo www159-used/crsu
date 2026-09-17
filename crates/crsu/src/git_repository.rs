@@ -1,6 +1,7 @@
 use std::fmt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// 当前 Git working tree，以及所有 crsu 工作流需要的仓库操作。
 pub struct Repository {
@@ -15,6 +16,7 @@ pub struct ReviewDiff {
     patch: String,
     title: String,
     review_id: Option<String>,
+    objectives: String,
 }
 
 impl Repository {
@@ -64,13 +66,60 @@ impl Repository {
 
         let title = self.output(["show", "-s", "--format=%s", "HEAD"])?;
         let message = self.output(["show", "-s", "--format=%B", "HEAD"])?;
+        let branch = self.output(["branch", "--show-current"])?;
+        let last_tag = self
+            .output(["describe", "--abbrev=0", "--tags"])
+            .unwrap_or_else(|_| "None".to_owned());
+        let objectives = objectives(&message, &branch, &base, &last_tag);
         Ok(ReviewDiff {
             base,
             commits,
             patch,
             title,
             review_id: review_id_from_message(&message),
+            objectives,
         })
+    }
+
+    /// Associates HEAD with a Crucible review without changing its subject.
+    pub fn attach_review(&self, review_url: &str, reviewers: &[String]) -> Result<(), Error> {
+        let remote_refs = self.output([
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "--contains=HEAD",
+            "refs/remotes",
+        ])?;
+        if !remote_refs.is_empty() {
+            return Err(Error::PublishedCommit { remote_refs });
+        }
+
+        let message = self.output(["show", "-s", "--format=%B", "HEAD"])?;
+        let amended = managed_commit_message(&message, review_url, reviewers);
+
+        let mut child = Command::new("git")
+            .args(["commit", "--amend", "-F", "-"])
+            .current_dir(&self.work_tree)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(Error::GitUnavailable)?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::GitCommand {
+                message: "failed to open git commit message input".to_owned(),
+            })?
+            .write_all(amended.as_bytes())
+            .map_err(Error::GitUnavailable)?;
+        let output = child.wait_with_output().map_err(Error::GitUnavailable)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(Error::GitCommand {
+                message: text(&output.stderr),
+            })
+        }
     }
 
     fn ensure_clean_worktree(&self) -> Result<(), Error> {
@@ -117,6 +166,35 @@ impl Repository {
     fn output_untrimmed<const N: usize>(&self, arguments: [&str; N]) -> Result<String, Error> {
         command_output_untrimmed(&self.work_tree, arguments)
     }
+}
+
+fn managed_commit_message(message: &str, review_url: &str, reviewers: &[String]) -> String {
+    let mut paragraphs = message
+        .trim()
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|paragraph| !paragraph.is_empty())
+        .collect::<Vec<_>>();
+    let subject = paragraphs.first().copied().unwrap_or_default();
+    if !paragraphs.is_empty() {
+        paragraphs.remove(0);
+    }
+    let summary = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.starts_with("Summary:"))
+        .map_or("Summary:", |paragraph| *paragraph);
+    let preserved = paragraphs.into_iter().filter(|paragraph| {
+        !["Summary:", "Reviewers:", "Reviewed By:", "Url:"]
+            .iter()
+            .any(|field| paragraph.starts_with(field))
+    });
+    let mut output = vec![subject.to_owned()];
+    output.extend(preserved.map(ToOwned::to_owned));
+    output.push(summary.to_owned());
+    output.push(format!("Reviewers: {}", reviewers.join(", ")));
+    output.push("Reviewed By:".to_owned());
+    output.push(format!("Url: {}", review_url.trim()));
+    format!("{}\n", output.join("\n\n"))
 }
 
 pub(crate) fn git_remotes_match(left: &str, right: &str) -> bool {
@@ -179,6 +257,26 @@ impl ReviewDiff {
     #[must_use]
     pub fn review_id(&self) -> Option<&str> {
         self.review_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn objectives(&self) -> &str {
+        &self.objectives
+    }
+}
+
+fn objectives(message: &str, branch: &str, target: &str, last_tag: &str) -> String {
+    let summary = message
+        .trim()
+        .split("\n\n")
+        .map(str::trim)
+        .find_map(|paragraph| paragraph.strip_prefix("Summary:").map(str::trim))
+        .unwrap_or_default();
+    let metadata = format!("[ branch: {branch} ]\n[ target: {target} ]\n[ last_tag: {last_tag} ]");
+    if summary.is_empty() {
+        metadata
+    } else {
+        format!("{summary}\n\n{metadata}")
     }
 }
 
@@ -258,6 +356,7 @@ pub enum Error {
     GitCommand { message: String },
     NoDefaultBase,
     NoChanges { base: String },
+    PublishedCommit { remote_refs: String },
 }
 
 impl fmt::Display for Error {
@@ -272,13 +371,18 @@ impl fmt::Display for Error {
                 "no upstream or origin default branch; pass a base ref, for example: crsu diff origin/main"
             ),
             Self::NoChanges { base } => write!(formatter, "no changes relative to {base}"),
+            Self::PublishedCommit { remote_refs } => write!(
+                formatter,
+                "refusing to amend HEAD because it is already on remote branch(es): {}",
+                remote_refs.replace('\n', ", ")
+            ),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::review_id_from_message;
+    use super::{managed_commit_message, review_id_from_message};
 
     #[test]
     fn reads_legacy_cru_review_url_from_commit_body() {
@@ -290,5 +394,25 @@ mod tests {
     #[test]
     fn ignores_commit_messages_without_a_review_url() {
         assert_eq!(review_id_from_message("fix: example"), None);
+    }
+
+    #[test]
+    fn writes_legacy_cru_metadata_idempotently() {
+        let reviewers = vec!["alice".to_owned(), "bob".to_owned()];
+        let first = managed_commit_message(
+            "fix: example\n\nSummary: details\n\nUrl: http://old/cru/LP-1",
+            "http://cru/cru/LP-2",
+            &reviewers,
+        );
+        let second = managed_commit_message(&first, "http://cru/cru/LP-2", &reviewers);
+
+        assert_eq!(first, second);
+        assert_eq!(first.matches("Summary:").count(), 1);
+        assert_eq!(first.matches("Reviewers:").count(), 1);
+        assert!(first.contains("Summary: details"));
+        assert!(first.contains("Reviewers: alice, bob"));
+        assert!(first.contains("Reviewed By:"));
+        assert!(first.contains("Url: http://cru/cru/LP-2"));
+        assert!(!first.contains("http://old"));
     }
 }

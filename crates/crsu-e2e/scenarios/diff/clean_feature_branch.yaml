@@ -1,0 +1,44 @@
+name: clean feature branch produces a reviewable patch
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    feature change
+
+    Summary: explain why the feature is needed
+command:
+  - diff
+  - main
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers:
+    - alice
+    - bob
+  review_id: COMMON-123
+expect:
+  success: true
+  head_subject: "feature change"
+  head_body_contains:
+    - "Url: http://127.0.0.1:"
+    - "/cru/COMMON-123"
+    - "Reviewers: alice, bob"
+  stdout_contains:
+    - "Base: main"
+    - "Commits: 1"
+    - "Patch bytes: "
+    - "Review: COMMON-123"
+  review:
+    title: "feature change"
+    objectives: |-
+      explain why the feature is needed
+
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review
