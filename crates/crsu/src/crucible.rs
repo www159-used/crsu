@@ -193,6 +193,7 @@ pub struct Submission {
     created: bool,
     reviewers: Vec<String>,
     title_update: Option<TitleUpdate>,
+    objectives_updated: bool,
 }
 
 struct TitleUpdate {
@@ -227,6 +228,11 @@ impl Submission {
             .as_ref()
             .map(|update| (update.previous.as_str(), update.current.as_str()))
     }
+
+    #[must_use]
+    pub fn objectives_were_updated(&self) -> bool {
+        self.objectives_updated
+    }
 }
 
 pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submission>, CrucibleError> {
@@ -236,13 +242,14 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
     config.validate_anchor()?;
 
     if let Some(review_id) = review_diff.review_id() {
-        let title_update = update_review(&config, review_id, review_diff)?;
+        let update = update_review(&config, review_id, review_diff)?;
         return Ok(Some(Submission {
             review_id: review_id.to_owned(),
             review_url: format!("{}/cru/{review_id}", config.url),
             created: false,
             reviewers: config.reviewers,
-            title_update,
+            title_update: update.title,
+            objectives_updated: update.objectives,
         }));
     }
 
@@ -297,6 +304,7 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
         created: true,
         reviewers: config.reviewers,
         title_update: None,
+        objectives_updated: false,
     }))
 }
 
@@ -325,7 +333,7 @@ fn update_review(
     config: &Config,
     review_id: &str,
     review_diff: &ReviewDiff,
-) -> Result<Option<TitleUpdate>, CrucibleError> {
+) -> Result<ReviewUpdate, CrucibleError> {
     let review = config
         .http
         .get(format!(
@@ -381,7 +389,8 @@ fn update_review(
             current: review_diff.title().to_owned(),
         })
     };
-    if current_objectives != review_diff.objectives() {
+    let objectives = current_objectives != review_diff.objectives();
+    if objectives {
         update_review_ajax(
             config,
             review_id,
@@ -393,7 +402,12 @@ fn update_review(
     if is_draft && !config.reviewers.is_empty() {
         start_review(config, review_id)?;
     }
-    Ok(title)
+    Ok(ReviewUpdate { title, objectives })
+}
+
+struct ReviewUpdate {
+    title: Option<TitleUpdate>,
+    objectives: bool,
 }
 
 fn update_review_ajax(

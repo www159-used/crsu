@@ -31,6 +31,7 @@ expect:
   stdout_contains:
     - "Review: COMMON-123"
     - "Title updated: fix: old review title -> fix: current Git title"
+    - "Objectives updated"
   review:
     title: "fix: current Git title"
     objectives: |-

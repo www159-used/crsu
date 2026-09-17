@@ -285,6 +285,9 @@ fn diff(base: Option<&str>, attach: Option<&str>) -> ExitCode {
                     if let Some((previous, current)) = submission.title_update() {
                         println!("Title updated: {previous} -> {current}");
                     }
+                    if submission.objectives_were_updated() {
+                        println!("Objectives updated");
+                    }
                     if submission.was_created()
                         && let Err(error) = repository
                             .attach_review(submission.review_url(), submission.reviewers())
