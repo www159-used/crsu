@@ -12,6 +12,8 @@
 
 ```text
 crsu doctor
+crsu status
+crsu status LP-1476 LP-1478
 crsu diff [base]
 crsu copy [base]
 crsu copy --jira TIC-xxxx
@@ -32,6 +34,7 @@ crsu patches prune
 ```
 
 - `doctor`：只读检查当前 Git 仓库。
+- `status`：只读拉取 Crucible 评审（`GET reviews-v1/{id}` + reviewers）。默认用 HEAD 的 `Url:`；也可直接传一个或多个 review id。stdout 是稳定 JSON：`state`、`title`、`objectives`、`target`、`reviewers`。不扫 git、不算 rebase / landable。要找各分支的 id 用 `copy --jira` 或 `git log`。
 - `init`：分段收集 Crucible 地址、用户名/密码、项目和 FishEye 仓库。它登录取得 token，
   不保存密码。项目与仓库候选从 Crucible 实时读取；有 `fzf` 时可搜索选择，没有则降级为
   编号选择。结果写入共享 Git 目录的 `.git/crsu/config.toml`（权限 `0600`）。

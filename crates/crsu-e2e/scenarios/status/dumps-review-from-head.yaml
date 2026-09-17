@@ -1,0 +1,33 @@
+name: status reads the review id from HEAD Url
+repository:
+  files:
+    README.md: "feature\n"
+  message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+crucible:
+  reviews:
+    - review_id: COMMON-99
+      title: "fix: land me"
+      state: Review
+      objectives: |-
+        [ target: origin/feature ]
+      reviewers:
+        - username: alice
+          completed: false
+command: [status]
+expect:
+  success: true
+  stdout_json:
+    reviews:
+      - review_id: COMMON-99
+        url: http://crucible/cru/COMMON-99
+        title: "fix: land me"
+        state: Review
+        objectives: |-
+          [ target: origin/feature ]
+        target: origin/feature
+        reviewers:
+          - username: alice
+            completed: false

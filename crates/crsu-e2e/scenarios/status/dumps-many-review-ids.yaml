@@ -1,0 +1,44 @@
+name: status dumps each given review id
+crucible:
+  reviews:
+    - review_id: LP-1476
+      title: "[TIC-10733] fix: fd leak"
+      state: Closed
+      objectives: |-
+        [ target: origin/4.6 ]
+      reviewers:
+        - username: alice
+          completed: true
+    - review_id: LP-1478
+      title: "[TIC-10733] fix: fd leak"
+      state: Review
+      objectives: |-
+        [ target: origin/5.0 ]
+      reviewers:
+        - username: alice
+          completed: true
+command: [status, LP-1476, LP-1478]
+expect:
+  success: true
+  stdout_json:
+    reviews:
+      - review_id: LP-1476
+        url: http://crucible/cru/LP-1476
+        title: "[TIC-10733] fix: fd leak"
+        state: Closed
+        objectives: |-
+          [ target: origin/4.6 ]
+        target: origin/4.6
+        reviewers:
+          - username: alice
+            completed: true
+      - review_id: LP-1478
+        url: http://crucible/cru/LP-1478
+        title: "[TIC-10733] fix: fd leak"
+        state: Review
+        objectives: |-
+          [ target: origin/5.0 ]
+        target: origin/5.0
+        reviewers:
+          - username: alice
+            completed: true

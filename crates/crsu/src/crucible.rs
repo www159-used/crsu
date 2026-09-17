@@ -354,7 +354,7 @@ fn review_to_update<'a>(
     }
 }
 
-fn finished_review_state(state: &str) -> bool {
+pub(crate) fn finished_review_state(state: &str) -> bool {
     matches!(state, "Closed" | "Dead" | "Abandoned")
 }
 
@@ -367,19 +367,60 @@ pub struct LandReview {
     pub reviewed_by: Vec<String>,
 }
 
-pub fn land_review(config: &Config, review_id: &str) -> Result<LandReview, CrucibleError> {
+/// One reviewer row from `GET .../reviewers`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReviewerStatus {
+    pub username: String,
+    pub completed: bool,
+}
+
+/// Protocol snapshot of one review: `GET reviews-v1/{id}` plus reviewers.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReviewStatus {
+    pub review_id: String,
+    pub url: String,
+    pub title: String,
+    pub state: String,
+    pub objectives: String,
+    pub target: Option<String>,
+    pub reviewers: Vec<ReviewerStatus>,
+}
+
+/// Reads review state and reviewers without deciding whether land is allowed.
+pub fn inspect_review(config: &Config, review_id: &str) -> Result<LandReview, CrucibleError> {
+    let status = review_status(config, review_id)?;
+    Ok(LandReview {
+        review_id: status.review_id,
+        review_url: status.url,
+        state: status.state,
+        objectives: status.objectives,
+        reviewers: status
+            .reviewers
+            .iter()
+            .map(|reviewer| reviewer.username.clone())
+            .collect(),
+        reviewed_by: status
+            .reviewers
+            .iter()
+            .filter(|reviewer| reviewer.completed)
+            .map(|reviewer| reviewer.username.clone())
+            .collect(),
+    })
+}
+
+/// Fetches one review and its reviewers from Crucible.
+pub fn review_status(config: &Config, review_id: &str) -> Result<ReviewStatus, CrucibleError> {
     let review = get_json(config, &format!("rest-service/reviews-v1/{review_id}"))?;
+    let title = review
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let state = review
         .get("state")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    if finished_review_state(&state) {
-        return Err(CrucibleError::ReviewFinished {
-            review_id: review_id.to_owned(),
-            state,
-        });
-    }
     let objectives = review
         .get("description")
         .and_then(Value::as_str)
@@ -390,29 +431,40 @@ pub fn land_review(config: &Config, review_id: &str) -> Result<LandReview, Cruci
         &format!("rest-service/reviews-v1/{review_id}/reviewers"),
     )?;
     let mut reviewers = Vec::new();
-    let mut reviewed_by = Vec::new();
     if let Some(entries) = reviewers_json.get("reviewer").and_then(Value::as_array) {
         for entry in entries {
-            let Some(name) = entry.get("userName").and_then(Value::as_str) else {
+            let Some(username) = entry.get("userName").and_then(Value::as_str) else {
                 continue;
             };
-            reviewers.push(name.to_owned());
-            if entry.get("completed").and_then(Value::as_bool) == Some(true) {
-                reviewed_by.push(name.to_owned());
-            }
+            reviewers.push(ReviewerStatus {
+                username: username.to_owned(),
+                completed: entry.get("completed").and_then(Value::as_bool) == Some(true),
+            });
         }
     }
-    if reviewed_by.is_empty() {
-        return Err(CrucibleError::WaitingForReview);
-    }
-    Ok(LandReview {
+    Ok(ReviewStatus {
         review_id: review_id.to_owned(),
-        review_url: review_url(&config.url, review_id),
+        url: review_url(&config.url, review_id),
+        title,
         state,
+        target: crate::git_repository::target_from_objectives(&objectives).map(str::to_owned),
         objectives,
         reviewers,
-        reviewed_by,
     })
+}
+
+pub fn land_review(config: &Config, review_id: &str) -> Result<LandReview, CrucibleError> {
+    let review = inspect_review(config, review_id)?;
+    if finished_review_state(&review.state) {
+        return Err(CrucibleError::ReviewFinished {
+            review_id: review.review_id,
+            state: review.state,
+        });
+    }
+    if review.reviewed_by.is_empty() {
+        return Err(CrucibleError::WaitingForReview);
+    }
+    Ok(review)
 }
 
 /// Closes a Crucible review after a successful land push. Already-closed reviews succeed.

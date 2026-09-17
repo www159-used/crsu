@@ -1,0 +1,26 @@
+name: status reports Closed state from Crucible
+crucible:
+  reviews:
+    - review_id: COMMON-99
+      title: "fix: already closed"
+      state: Closed
+      objectives: |-
+        [ target: origin/feature ]
+      reviewers:
+        - username: alice
+          completed: true
+command: [status, COMMON-99]
+expect:
+  success: true
+  stdout_json:
+    reviews:
+      - review_id: COMMON-99
+        url: http://crucible/cru/COMMON-99
+        title: "fix: already closed"
+        state: Closed
+        objectives: |-
+          [ target: origin/feature ]
+        target: origin/feature
+        reviewers:
+          - username: alice
+            completed: true

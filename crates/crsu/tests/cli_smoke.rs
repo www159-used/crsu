@@ -13,6 +13,7 @@ fn help_lists_the_initial_workflow_commands() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
     assert!(stdout.contains("doctor"));
+    assert!(stdout.contains("status"));
     assert!(stdout.contains("config"));
     assert!(stdout.contains("diff"));
     assert!(stdout.contains("copy"));
@@ -39,6 +40,19 @@ fn comments_help_lists_reply_and_resolution_commands() {
     assert!(stdout.contains("edit"));
     assert!(stdout.contains("defect"));
     assert!(stdout.contains("undefect"));
+}
+
+#[test]
+fn status_help_lists_review_ids() {
+    let output = crsu()
+        .args(["status", "--help"])
+        .output()
+        .expect("run crsu status --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
+    assert!(stdout.contains("REVIEW_IDS"));
+    assert!(!stdout.contains("--jira"));
 }
 
 #[test]

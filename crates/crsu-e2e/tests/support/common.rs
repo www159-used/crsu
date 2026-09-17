@@ -206,6 +206,9 @@ pub struct Expectation {
     pub success: bool,
     #[serde(default)]
     pub stdout_contains: Vec<String>,
+    /// Parsed JSON contract for commands whose product is stable JSON.
+    #[serde(default)]
+    pub stdout_json: Option<serde_json::Value>,
     #[serde(default)]
     pub stderr_contains: Vec<String>,
     pub head_subject: Option<String>,
@@ -231,6 +234,48 @@ pub fn assert_scenario(name: &str, output: &Output, expect: &Expectation) {
     );
     assert_contains_all(name, &text(&output.stdout), &expect.stdout_contains);
     assert_contains_all(name, &text(&output.stderr), &expect.stderr_contains);
+}
+
+/// Locks stdout as JSON. `rewrite_origin` maps the live mock base URL to a stable prefix.
+pub fn assert_stdout_json(
+    name: &str,
+    stdout: &str,
+    expected: &serde_json::Value,
+    rewrite_origin: Option<(&str, &str)>,
+) {
+    let mut actual: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|error| panic!("scenario '{name}' stdout is not JSON: {error}\n{stdout}"));
+    if let Some((from, to)) = rewrite_origin {
+        rewrite_string_prefix(&mut actual, from, to);
+    }
+    assert_eq!(
+        actual,
+        *expected,
+        "scenario '{name}' JSON stdout mismatch\nactual: {}\nexpected: {}",
+        serde_json::to_string_pretty(&actual).expect("actual json"),
+        serde_json::to_string_pretty(expected).expect("expected json"),
+    );
+}
+
+fn rewrite_string_prefix(value: &mut serde_json::Value, from: &str, to: &str) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(rest) = text.strip_prefix(from) {
+                *text = format!("{to}{rest}");
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                rewrite_string_prefix(item, from, to);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for item in fields.values_mut() {
+                rewrite_string_prefix(item, from, to);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Asserts the Crucible token never reached command output.

@@ -194,6 +194,7 @@ enum Script {
     Init(Box<InitFixture>),
     Review(Box<ReviewFixture>),
     Land(Box<LandFixture>),
+    Reviews(Vec<LandFixture>),
     Comments(Box<CommentsFixture>),
     Patches(Box<PatchesFixture>),
 }
@@ -236,6 +237,12 @@ impl MockCrucible {
     #[must_use]
     pub fn start_land(fixture: &LandFixture) -> Self {
         Self::spawn(Script::Land(Box::new(fixture.clone())), None)
+    }
+
+    /// Starts a Crucible adapter that answers GET review/reviewers for many ids.
+    #[must_use]
+    pub fn start_reviews(reviews: &[LandFixture]) -> Self {
+        Self::spawn(Script::Reviews(reviews.to_vec()), None)
     }
 
     /// Starts a Crucible adapter that serves comments and review items.
@@ -325,7 +332,7 @@ impl MockCrucible {
         assert!(errors.is_empty(), "mock Crucible errors: {errors:#?}");
         let interactions = self.shared.interactions.lock().expect("interactions lock");
         match &self.shared.script {
-            Script::Init(_) => {}
+            Script::Init(_) | Script::Reviews(_) => {}
             Script::Review(fixture) => {
                 assert_review_script(fixture, &self.shared.review, &interactions);
             }
@@ -497,6 +504,7 @@ fn handle_request(mut request: tiny_http::Request, shared: &Shared) -> Result<()
         Script::Init(fixture) => handle_init(fixture, &method, &path, &body),
         Script::Review(fixture) => handle_review(fixture, &shared.review, &method, &path, &body)?,
         Script::Land(fixture) => handle_land(fixture, &method, &path),
+        Script::Reviews(reviews) => handle_reviews(reviews, &method, &path),
         Script::Comments(fixture) => handle_comments(fixture, &method, &path),
         Script::Patches(fixture) => handle_patches(fixture, &method, &path),
     };
@@ -663,6 +671,16 @@ fn handle_review(
         ));
     }
     Ok((404, format!("unhandled {method} {path}")))
+}
+
+fn handle_reviews(reviews: &[LandFixture], method: &str, path: &str) -> (u16, String) {
+    for fixture in reviews {
+        let (status, body) = handle_land(fixture, method, path);
+        if status != 404 {
+            return (status, body);
+        }
+    }
+    (404, format!("unhandled {method} {path}"))
 }
 
 fn handle_land(fixture: &LandFixture, method: &str, path: &str) -> (u16, String) {

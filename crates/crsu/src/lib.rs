@@ -116,6 +116,11 @@ enum Command {
     },
     /// 检查本地 Git 与评审工具环境。
     Doctor,
+    /// 从 Crucible 读取评审状态，stdout 为稳定 JSON。
+    Status {
+        /// Crucible review id；可重复。省略时从 HEAD 的 `Url:` 读取。
+        review_ids: Vec<String>,
+    },
     /// 基于可选的基线分支创建或更新评审。
     Diff {
         /// 作为比较基线的 Git ref；默认使用当前 upstream。
@@ -329,6 +334,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Init => init_tui::run(),
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
+        Command::Status { review_ids } => status(&review_ids),
         Command::Diff { base, attach, yes } => diff(base.as_deref(), attach.as_deref(), yes),
         Command::Copy {
             base,
@@ -500,6 +506,37 @@ fn confirm_yes(prompt: &str) -> bool {
         return false;
     }
     line.trim().eq_ignore_ascii_case("y")
+}
+
+fn status(review_ids: &[String]) -> ExitCode {
+    let ids = if review_ids.is_empty() {
+        match review_id_or_head(None, "status") {
+            Ok(review_id) => vec![review_id],
+            Err(code) => return code,
+        }
+    } else {
+        review_ids.to_vec()
+    };
+    let config = match crucible::configured() {
+        Ok(config) => config,
+        Err(error) => return review_failed("status", error),
+    };
+    let mut reviews = Vec::new();
+    for review_id in ids {
+        match crucible::review_status(&config, &review_id) {
+            Ok(review) => reviews.push(review),
+            Err(error) => return review_failed("status", error),
+        }
+    }
+    let json =
+        serde_json::to_string_pretty(&StatusReport { reviews }).expect("status json serialize");
+    println!("{json}");
+    ExitCode::SUCCESS
+}
+
+#[derive(serde::Serialize)]
+struct StatusReport {
+    reviews: Vec<crucible::ReviewStatus>,
 }
 
 fn copy(base: Option<&str>, jira: Option<&str>, branches: &[String]) -> ExitCode {

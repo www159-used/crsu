@@ -16,6 +16,8 @@ mod land;
 mod overflow;
 #[path = "support/patches.rs"]
 mod patches;
+#[path = "support/status.rs"]
+mod status;
 #[path = "support/ui.rs"]
 mod ui;
 
@@ -56,6 +58,7 @@ fn run(category: &str, path: &Path) {
         "land" => land::run(path),
         "overflow" => overflow::run(path),
         "patches" => patches::run(path),
+        "status" => status::run(path),
         "ui" => ui::run(path),
         _ => panic!("unknown scenario category: {category}"),
     }

@@ -2,16 +2,17 @@
 name: crsu
 description: >-
   Drive Git + Crucible reviews with the crsu CLI: diff to create or update a
-  review, land to pull-rebase and push the same branch, comments as stable
-  JSON, patches to drop stale full uploads. Use when the user mentions crsu,
-  crsu diff, crsu land, 出评审, 合入评审, 评审评论 JSON, Need Resolve, 标待解决,
-  defect, patches, or prune.
+  review, land to pull-rebase and push the same branch, status as stable
+  JSON for agents, comments as stable JSON, patches to drop stale full
+  uploads. Use when the user mentions crsu, crsu diff, crsu land, crsu
+  status, 出评审, 合入评审, 评审状态 JSON, 评审评论 JSON, Need Resolve,
+  标待解决, defect, patches, or prune.
 ---
 
 # crsu
 
 当前仓库里走 Git + Crucible 评审时用 `crsu`。
-命令细节以 `crsu --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。
+命令细节以 `crsu --help` / `crsu status --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。
 
 没有本地仓库、只读别人的评审页时，不要对评审做写操作。
 
@@ -20,6 +21,8 @@ description: >-
 `diff` 出评审。基线要新，就 fetch `origin` 上的目标分支。不要为了 diff 去改本地那份 `master`/`main`。
 
 `land` 合入。先对当前分支 `pull --rebase`，再 push。本地目标副本是 pull 的事；另一条本地 `master` 旧着或已经分叉，提一句即可，不挡正常 push。
+
+`status` 只问 Crucible。stdout 是稳定 JSON：`state`、reviewers、objectives。git log / rebase / 脏工作区用 git 和 bash 做。批量 `diff`/`land` 不要做成一条 crsu 命令。
 
 `comments` 给 agent 用。stdout 是稳定 JSON。改自己的评论不必 `--i-mean-it`。
 
@@ -33,9 +36,21 @@ HEAD 里的 `Url:` 指向未关闭的评审时追加 patch；评审已关闭或�
 
 成功后看 stdout 的 Review 行，以及 HEAD 提交里的 `Url:`。当前 HEAD 摘要用 `crsu copy`。同一 JIRA 铺了多条分支时用 `crsu copy --jira TIC-xxxx`，只读各提交的 `Url:`；有 `[ target: ]` 用它，没有就用分支名（存在 `origin/<branch>` 则写成 `origin/<branch>`）。不要 checkout 或 fetch。stdout 和剪贴板都是那几行摘要。V22 不要走 `--jira`。
 
+## 状态
+
+```bash
+crsu status                 # 默认从 HEAD 的 Url: 读 review id
+crsu status LP-1476
+crsu status LP-1476 LP-1478
+```
+
+顶层字段是 `reviews`。每条认这些键：`review_id`、`url`、`title`、`state`、`objectives`、`target`（从 objectives 的 `[ target: ]` 抽出）、`reviewers`（`username` / `completed`）。这是 `GET reviews-v1/{id}` 加 reviewers，不扫仓库、不算能不能 rebase。
+
+各分支的 id 用 `copy --jira` 或 `git log --grep`。能不能 land 由上层看 `state` / `completed`，再加上自己的 `git merge-tree` / `git status`。
+
 ## 合入
 
-`crsu land -y`。首版只做同分支、单个 commit。评审里的 `[ target: ]` 必须和即将 push 的分支一致，对不上要用 `--force`，不要假装跨分支 merge。还没人 complete 就不要 land。评审已关闭或已放弃不要 land，不要 rebase，不要 push。冲突停下来，交给用户 rebase。
+`crsu land -y`。首版只做同分支、单个 commit。评审里的 `[ target: ]` 必须和即将 push 的分支一致，对不上要用 `--force`，不要假装跨分支 merge。还没人 complete 就不要 land。评审已关闭或已放弃不要 land，不要 rebase，不要 push。冲突停下来，交给用户 rebase。先 `status` 再决定要不要 land。
 
 ## 评论
 
@@ -73,4 +88,4 @@ list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`lat
 
 ## 不要做
 
-不要在 `copy` 时同步 git。不要因为本地目标分支分叉而中止 push。不要实现或建议跨分支 land。不要在 `diff` 里自动 prune。
+不要在 `copy` 时同步 git。不要让 crsu 去做 git/bash 能做的事（扫分支、merge-tree、判断脏工作区）。不要因为本地目标分支分叉而中止 push。不要实现或建议跨分支 land。不要实现或建议批量 `diff --jira` / `land --jira`。不要在 `diff` 里自动 prune。
