@@ -15,6 +15,8 @@ fn help_lists_the_initial_workflow_commands() {
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("config"));
     assert!(stdout.contains("diff"));
+    assert!(stdout.contains("copy"));
+    assert!(stdout.contains("completions"));
     assert!(stdout.contains("land"));
 }
 
@@ -144,13 +146,24 @@ fn doctor_reports_the_current_git_repository() {
 }
 
 #[test]
-fn land_accepts_an_optional_target_branch() {
+fn land_rejects_cross_branch_targets() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    git(repository.path(), &["init", "-b", "main", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "t@example.com"],
+    );
+    std::fs::write(repository.path().join("README"), "x\n").expect("write");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "base", "-q"]);
     let output = crsu()
         .args(["land", "master"])
+        .current_dir(repository.path())
         .output()
         .expect("run crsu land");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 error");
-    assert!(stderr.contains("not implemented"));
+    assert!(stderr.contains("cross-branch land"));
 }

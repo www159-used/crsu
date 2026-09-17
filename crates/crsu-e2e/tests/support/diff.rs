@@ -1,12 +1,11 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
-use super::common::load_yaml;
+use super::common::{assert_contains_all, crsu_binary, load_yaml, run_git, text, write_files};
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Output};
-use std::sync::OnceLock;
 use tempfile::TempDir;
 
 pub fn run(path: &Path) {
@@ -26,14 +25,14 @@ fn run_scenario(scenario: &Scenario) {
         text(&output.stderr),
     );
     assert_contains_all(
+        &scenario.name,
         &text(&output.stdout),
         &scenario.expect.stdout_contains,
-        scenario,
     );
     assert_contains_all(
+        &scenario.name,
         &text(&output.stderr),
         &scenario.expect.stderr_contains,
-        scenario,
     );
     let subject = repository.git_output(["show", "-s", "--format=%s", "HEAD"]);
     if let Some(expected) = &scenario.expect.head_subject {
@@ -44,7 +43,7 @@ fn run_scenario(scenario: &Scenario) {
         );
     }
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
-    assert_contains_all(&body, &scenario.expect.head_body_contains, scenario);
+    assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
     if let Some(crucible) = &scenario.crucible {
         let output = format!("{}{}", text(&output.stdout), text(&output.stderr));
         assert!(
@@ -109,16 +108,6 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
         );
     }
     output
-}
-
-fn assert_contains_all(actual: &str, expected: &[String], scenario: &Scenario) {
-    for expected in expected {
-        assert!(
-            actual.contains(expected),
-            "scenario '{}' expected output to contain '{expected}', actual output: {actual}",
-            scenario.name
-        );
-    }
 }
 
 struct ScenarioRepository {
@@ -239,71 +228,8 @@ impl ScenarioRepository {
     }
 
     fn git_output<const N: usize>(&self, arguments: [&str; N]) -> String {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.working_directory)
-            .output()
-            .expect("run git");
-        assert!(
-            output.status.success(),
-            "git failed: {}",
-            text(&output.stderr)
-        );
-        text(&output.stdout).trim().to_owned()
+        super::common::git_output(&self.working_directory, arguments)
     }
-}
-
-fn crsu_binary() -> &'static Path {
-    static BINARY: OnceLock<std::path::PathBuf> = OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(Path::parent)
-                .expect("workspace root");
-            let status = Command::new("cargo")
-                .args(["build", "--quiet", "-p", "crsu", "--bin", "crsu"])
-                .current_dir(workspace)
-                .status()
-                .expect("build crsu binary for E2E tests");
-            assert!(status.success(), "building crsu binary failed");
-
-            let profile = std::env::current_exe()
-                .expect("current E2E executable")
-                .parent()
-                .and_then(Path::parent)
-                .expect("Cargo profile directory")
-                .to_path_buf();
-            profile.join(format!("crsu{}", std::env::consts::EXE_SUFFIX))
-        })
-        .as_path()
-}
-
-fn write_files(repository: &Path, files: &BTreeMap<String, String>) {
-    for (path, contents) in files {
-        let path = repository.join(path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("create file parent");
-        }
-        std::fs::write(path, contents).expect("write repository file");
-    }
-}
-
-fn run_git<const N: usize>(repository: &Path, arguments: [&str; N]) {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(repository)
-        .output()
-        .expect("run git");
-    assert!(
-        output.status.success(),
-        "git failed: {}",
-        text(&output.stderr)
-    );
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8(bytes.to_owned()).expect("command output is UTF-8")
 }
 
 #[derive(Deserialize)]

@@ -325,6 +325,98 @@ pub fn submit_confirmation(review_diff: &ReviewDiff) -> Result<Option<String>, C
     }))
 }
 
+pub struct LandReview {
+    pub review_id: String,
+    pub review_url: String,
+    pub state: String,
+    pub objectives: String,
+    pub reviewers: Vec<String>,
+    pub reviewed_by: Vec<String>,
+}
+
+pub fn land_review(review_id: &str) -> Result<LandReview, CrucibleError> {
+    let config = Config::from_environment()?.ok_or(CrucibleError::MissingConfiguration(
+        "CRSU_CRUCIBLE_URL / project configuration",
+    ))?;
+    let review = get_json(&config, &format!("rest-service/reviews-v1/{review_id}"))?;
+    let state = review
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let objectives = review
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let reviewers_json = get_json(
+        &config,
+        &format!("rest-service/reviews-v1/{review_id}/reviewers"),
+    )?;
+    let mut reviewers = Vec::new();
+    let mut reviewed_by = Vec::new();
+    if let Some(entries) = reviewers_json.get("reviewer").and_then(Value::as_array) {
+        for entry in entries {
+            let Some(name) = entry.get("userName").and_then(Value::as_str) else {
+                continue;
+            };
+            reviewers.push(name.to_owned());
+            if entry.get("completed").and_then(Value::as_bool) == Some(true) {
+                reviewed_by.push(name.to_owned());
+            }
+        }
+    }
+    if reviewed_by.is_empty() {
+        return Err(CrucibleError::WaitingForReview);
+    }
+    Ok(LandReview {
+        review_id: review_id.to_owned(),
+        review_url: format!("{}/cru/{review_id}", config.url),
+        state,
+        objectives,
+        reviewers,
+        reviewed_by,
+    })
+}
+
+/// Closes a Crucible review after a successful land push. Already-closed reviews succeed.
+pub fn close_review(review_id: &str) -> Result<(), CrucibleError> {
+    let config = Config::from_environment()?.ok_or(CrucibleError::MissingConfiguration(
+        "CRSU_CRUCIBLE_URL / project configuration",
+    ))?;
+    let review = get_json(&config, &format!("rest-service/reviews-v1/{review_id}"))?;
+    if review.get("state").and_then(Value::as_str) == Some("Closed") {
+        return Ok(());
+    }
+    let response = config
+        .http
+        .post(format!(
+            "{}/rest-service/reviews-v1/{review_id}/close",
+            config.url
+        ))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .query(&[("FEAUTH", &config.token)])
+        .body("{}")
+        .send()
+        .map_err(request_error)?;
+    response_body(response)?;
+    Ok(())
+}
+
+fn get_json(config: &Config, path: &str) -> Result<Value, CrucibleError> {
+    let response = config
+        .http
+        .get(format!("{}/{path}", config.url))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .query(&[("FEAUTH", &config.token)])
+        .send()
+        .map_err(request_error)?;
+    parse_json(&response_body(response)?)
+}
+
 fn start_review(config: &Config, review_id: &str) -> Result<(), CrucibleError> {
     let response = config
         .http
@@ -351,18 +443,7 @@ fn update_review(
     review_id: &str,
     review_diff: &ReviewDiff,
 ) -> Result<ReviewUpdate, CrucibleError> {
-    let review = config
-        .http
-        .get(format!(
-            "{}/rest-service/reviews-v1/{review_id}",
-            config.url
-        ))
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::ACCEPT_ENCODING, "identity")
-        .query(&[("FEAUTH", &config.token)])
-        .send()
-        .map_err(request_error)?;
-    let review = parse_json(&response_body(review)?)?;
+    let review = get_json(config, &format!("rest-service/reviews-v1/{review_id}"))?;
     let current_title = review
         .get("name")
         .and_then(Value::as_str)
@@ -544,6 +625,7 @@ pub enum CrucibleError {
     MalformedCandidates,
     TitleUpdateRejected,
     ObjectivesUpdateRejected,
+    WaitingForReview,
     MissingConfiguration(&'static str),
     ProjectConfiguration(String),
     AnchorMismatch {
@@ -575,6 +657,7 @@ impl fmt::Display for CrucibleError {
             Self::ObjectivesUpdateRejected => {
                 write!(formatter, "Crucible did not update the review objectives")
             }
+            Self::WaitingForReview => write!(formatter, "waiting for review"),
             Self::MissingConfiguration(name) => write!(formatter, "missing {name}"),
             Self::ProjectConfiguration(error) => {
                 write!(formatter, "project configuration failed: {error}")

@@ -6,6 +6,8 @@ mod common;
 mod diff;
 #[path = "support/init.rs"]
 mod init;
+#[path = "support/land.rs"]
+mod land;
 #[path = "support/overflow.rs"]
 mod overflow;
 #[path = "support/ui.rs"]
@@ -43,6 +45,7 @@ fn run(category: &str, path: &Path) {
     match category {
         "diff" => diff::run(path),
         "init" => init::run(path),
+        "land" => land::run(path),
         "overflow" => overflow::run(path),
         "ui" => ui::run(path),
         _ => panic!("unknown scenario category: {category}"),

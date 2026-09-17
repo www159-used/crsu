@@ -1,0 +1,36 @@
+name: land refuses when review target does not match upstream
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+  origin:
+    default_branch: main
+command: [land, --yes]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  title: "fix: land me"
+  state: Review
+  objectives: |-
+    [ branch: feature ]
+    [ target: main ]
+    [ last_tag: None ]
+  reviewers:
+    - username: alice
+      completed: true
+expect:
+  success: false
+  stderr_contains:
+    - "review targets main"
+    - "origin/feature"
+  stdout_contains:
+    - "Review target: main"
+    - "Push: feature -> origin/feature"

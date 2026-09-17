@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use std::process::ExitCode;
 
 mod clipboard;
@@ -99,7 +99,7 @@ pub mod init_test_support {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Focused Git and Crucible review workflow")]
+#[command(name = "crsu", about = "Focused Git and Crucible review workflow")]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -127,10 +127,26 @@ enum Command {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
+    /// 将当前评审摘要复制到剪贴板：`[base] title url`。
+    Copy {
+        /// 作为合入目标显示的 Git ref；默认使用当前 upstream。
+        base: Option<String>,
+    },
+    /// 生成 shell 补全脚本。
+    Completions {
+        /// 目标 shell。
+        shell: clap_complete::Shell,
+    },
     /// 将当前分支合入可选的目标分支。
     Land {
-        /// 本地目标分支；默认使用当前分支。
+        /// 本地目标分支；默认使用当前分支（首版仅支持同分支 push）。
         target: Option<String>,
+        /// 跳过 push 前的确认提示。
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        /// 允许推到与 review 记录目标不一致的分支。
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -186,7 +202,9 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
         Command::Diff { base, attach, yes } => diff(base.as_deref(), attach.as_deref(), yes),
-        Command::Land { target } => not_implemented("land", target.as_deref()),
+        Command::Copy { base } => copy(base.as_deref()),
+        Command::Completions { shell } => completions(shell),
+        Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
     }
 }
 
@@ -350,6 +368,162 @@ fn confirm_yes(prompt: &str) -> bool {
     line.trim().eq_ignore_ascii_case("y")
 }
 
+fn copy(base: Option<&str>) -> ExitCode {
+    let repository = match git_repository::Repository::discover() {
+        Ok(repository) => repository,
+        Err(error) => {
+            eprintln!("copy failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (base, title, url) = match repository.share_summary(base) {
+        Ok(parts) => parts,
+        Err(error) => {
+            eprintln!("copy failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let summary = clipboard::summary(&base, &title, &url);
+    match clipboard::copy(&summary) {
+        Ok(()) => {
+            println!("Clipboard: {summary}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("clipboard failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn completions(shell: clap_complete::Shell) -> ExitCode {
+    let mut command = Cli::command();
+    clap_complete::generate(shell, &mut command, "crsu", &mut std::io::stdout());
+    ExitCode::SUCCESS
+}
+
+fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
+    let repository = match git_repository::Repository::discover() {
+        Ok(repository) => repository,
+        Err(error) => return land_failed(error),
+    };
+    if let Err(error) = repository.ensure_clean_worktree() {
+        return land_failed(error);
+    }
+    let current = match repository.current_branch() {
+        Ok(branch) => branch,
+        Err(error) => return land_failed(error),
+    };
+    let land_branch = target.unwrap_or(&current).to_owned();
+    if land_branch != current {
+        return land_failed(git_repository::Error::CrossBranchLand {
+            current,
+            target: land_branch,
+        });
+    }
+    let upstream = match repository.upstream_of(&current) {
+        Ok(upstream) => upstream,
+        Err(error) => return land_failed(error),
+    };
+    let acceptance = match land_acceptance(&repository, &upstream) {
+        Ok(acceptance) => acceptance,
+        Err(code) => return code,
+    };
+    let review_target = git_repository::target_from_objectives(&acceptance.objectives);
+    print_land_plan(&repository, &current, &upstream, &acceptance, review_target);
+    let target_error = match review_target {
+        Some(target) => repository.land_target_error(target, &upstream),
+        None => Some(git_repository::Error::MissingReviewTarget),
+    };
+    if let Some(error) = target_error {
+        if force {
+            eprintln!("warning: {error}; continuing because --force");
+        } else {
+            return land_failed(error);
+        }
+    }
+    if let Err(error) = repository.prepare_land_commit(
+        &acceptance.review_url,
+        &acceptance.reviewers,
+        &acceptance.reviewed_by,
+    ) {
+        return land_failed(error);
+    }
+    let remote_branch = upstream
+        .strip_prefix("origin/")
+        .unwrap_or(upstream.as_str());
+    println!("Rebasing onto {upstream}");
+    if let Err(error) = repository.pull_rebase_origin(remote_branch) {
+        return land_failed(error);
+    }
+    match repository.head_oneline() {
+        Ok(line) => println!("{line}"),
+        Err(error) => return land_failed(error),
+    }
+    let prompt = format!("push branch '{current}' to '{upstream}'? [y/N] ");
+    if !yes && !confirm_yes(&prompt) {
+        println!("Aborted");
+        return ExitCode::SUCCESS;
+    }
+    if let Err(error) = repository.push_to_origin(&current, remote_branch) {
+        return land_failed(error);
+    }
+    println!("Pushed: {current} -> {upstream}");
+    if let Err(error) = crucible::close_review(&acceptance.review_id) {
+        eprintln!("land failed: review was pushed, but closing failed: {error}");
+        return ExitCode::FAILURE;
+    }
+    println!("Closed: {}", acceptance.review_id);
+    ExitCode::SUCCESS
+}
+
+fn print_land_plan(
+    repository: &git_repository::Repository,
+    current: &str,
+    upstream: &str,
+    acceptance: &crucible::LandReview,
+    review_target: Option<&str>,
+) {
+    println!("Review: {} ({})", acceptance.review_id, acceptance.state);
+    println!("Review target: {}", review_target.unwrap_or("(none)"));
+    println!("Push: {current} -> {upstream}");
+    // shortstat is decorative; a failed git call should not hide the rest of the plan
+    if let Ok(stat) = repository.diff_shortstat(upstream)
+        && !stat.is_empty()
+    {
+        println!("Diff: {stat}");
+    }
+    println!("Reviewed By: {}", acceptance.reviewed_by.join(", "));
+}
+
+fn land_acceptance(
+    repository: &git_repository::Repository,
+    upstream: &str,
+) -> Result<crucible::LandReview, ExitCode> {
+    let commits = repository.commits_ahead_of(upstream).map_err(land_failed)?;
+    match commits.as_slice() {
+        [] => return Err(land_failed(git_repository::Error::NothingToLand)),
+        [_] => {}
+        _ => {
+            return Err(land_failed(git_repository::Error::MultipleCommits {
+                count: commits.len(),
+            }));
+        }
+    }
+    let first_message = repository
+        .commit_message(&commits[0])
+        .map_err(land_failed)?;
+    let Some(review_id) = git_repository::review_id_from_message(&first_message) else {
+        return Err(land_failed(git_repository::Error::NoReviewUrl));
+    };
+    crucible::land_review(&review_id).map_err(land_failed)
+}
+
+fn land_failed(error: impl std::fmt::Display) -> ExitCode {
+    eprintln!("land failed: {error}");
+    ExitCode::FAILURE
+}
+
 fn attach_review(repository: &git_repository::Repository, review_id: &str) -> ExitCode {
     if review_id.is_empty()
         || !review_id.contains('-')
@@ -397,10 +571,4 @@ fn doctor() -> ExitCode {
     };
     println!("Git repository: {}", repository.work_tree().display());
     ExitCode::SUCCESS
-}
-
-fn not_implemented(command: &str, target: Option<&str>) -> ExitCode {
-    let _ = target;
-    eprintln!("{command} is not implemented");
-    ExitCode::FAILURE
 }

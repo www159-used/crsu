@@ -58,6 +58,24 @@ pub struct ReviewFixture {
     pub response: ReviewResponse,
 }
 
+/// One land conversation: fetch review/reviewers, then close.
+#[derive(Clone, Debug)]
+pub struct LandFixture {
+    pub token: String,
+    pub review_id: String,
+    pub title: String,
+    pub state: String,
+    pub objectives: String,
+    pub reviewers: Vec<LandReviewer>,
+}
+
+/// A reviewer row returned while preparing to land.
+#[derive(Clone, Debug)]
+pub struct LandReviewer {
+    pub username: String,
+    pub completed: bool,
+}
+
 /// Result returned by Crucible when crsu creates a review.
 #[derive(Clone, Debug)]
 pub enum ReviewResponse {
@@ -212,6 +230,59 @@ impl MockCrucible {
             server: Some(server),
             stateful: None,
             review_mock_ids: vec![review_id],
+        }
+    }
+
+    /// Starts a Crucible adapter for landing an accepted review.
+    #[must_use]
+    pub fn start_land(fixture: &LandFixture) -> Self {
+        let server = MockServer::start();
+        let review_path = format!("/rest-service/reviews-v1/{}", fixture.review_id);
+        let reviewers_path = format!("{review_path}/reviewers");
+        let close_path = format!("{review_path}/close");
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&review_path)
+                .query_param("FEAUTH", &fixture.token);
+            then.status(200).json_body(review_json(&ReviewSnapshot {
+                id: fixture.review_id.clone(),
+                title: fixture.title.clone(),
+                objectives: fixture.objectives.clone(),
+                state: fixture.state.clone(),
+                reviewers: Vec::new(),
+            }));
+        });
+        let reviewers = fixture
+            .reviewers
+            .iter()
+            .map(|reviewer| {
+                serde_json::json!({
+                    "userName": reviewer.username,
+                    "completed": reviewer.completed,
+                })
+            })
+            .collect::<Vec<_>>();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&reviewers_path)
+                .query_param("FEAUTH", &fixture.token);
+            then.status(200)
+                .json_body(serde_json::json!({"reviewer": reviewers}));
+        });
+        let close_id = {
+            let close = server.mock(|when, then| {
+                when.method(POST)
+                    .path(&close_path)
+                    .query_param("FEAUTH", &fixture.token);
+                then.status(200)
+                    .json_body(serde_json::json!({"state":"Closed"}));
+            });
+            close.id
+        };
+        Self {
+            server: Some(server),
+            stateful: None,
+            review_mock_ids: vec![close_id],
         }
     }
 

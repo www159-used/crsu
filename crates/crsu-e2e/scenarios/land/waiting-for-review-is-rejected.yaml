@@ -1,0 +1,34 @@
+name: land refuses when no reviewer has completed
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+  origin:
+    default_branch: main
+command: [land, --yes]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  title: "fix: land me"
+  state: Review
+  objectives: |-
+    [ branch: feature ]
+    [ target: origin/feature ]
+    [ last_tag: None ]
+  reviewers:
+    - username: alice
+      completed: false
+    - username: bob
+      completed: false
+expect:
+  success: false
+  stderr_contains:
+    - "waiting for review"

@@ -54,3 +54,4 @@ else
 fi
 
 echo "Installed crsu: $binary"
+echo "Shell completions: eval \"\$(crsu completions zsh)\"  # or bash / fish"

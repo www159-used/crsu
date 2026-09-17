@@ -1,0 +1,43 @@
+name: same-branch land pushes and closes an accepted review
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+  origin:
+    default_branch: main
+command: [land, --yes]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  title: "fix: land me"
+  state: Review
+  objectives: |-
+    [ branch: feature ]
+    [ target: origin/feature ]
+    [ last_tag: None ]
+  reviewers:
+    - username: alice
+      completed: true
+    - username: bob
+      completed: false
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-99 (Review)"
+    - "Review target: origin/feature"
+    - "Push: feature -> origin/feature"
+    - "Reviewed By: alice"
+    - "Pushed:"
+    - "Closed: COMMON-99"
+  head_body_contains:
+    - "Reviewed By: alice"
+    - "Url: http://127.0.0.1:"
+    - "/cru/COMMON-99"

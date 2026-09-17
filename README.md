@@ -22,10 +22,9 @@ crsu land [target]
   编号选择。结果写入共享 Git 目录的 `.git/crsu/config.toml`（权限 `0600`）。
 - `diff`：基于可选基线生成 patch；优先读取环境变量，其次读取 `.git/crsu/config.toml`
   创建 Crucible review。
-- `land`：后续用于将当前分支合入可选目标分支。
+- `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。
 
-`diff` 与 `land` 当前只完成命令接口，明确拒绝执行，避免在工作流和安全规则
-确定前改动 Git、Crucible 或远端分支。
+`diff` 已可创建/更新评审；`land` 已支持同分支合入。跨分支 merge 尚未实现。
 
 ## 开发
 
