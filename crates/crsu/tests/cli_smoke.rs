@@ -42,6 +42,19 @@ fn comments_help_lists_reply_and_resolution_commands() {
 }
 
 #[test]
+fn copy_help_lists_jira_and_branches() {
+    let output = crsu()
+        .args(["copy", "--help"])
+        .output()
+        .expect("run crsu copy --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
+    assert!(stdout.contains("--jira"));
+    assert!(stdout.contains("--branches"));
+}
+
+#[test]
 fn patches_help_lists_list_delete_and_prune() {
     let output = crsu()
         .args(["patches", "--help"])

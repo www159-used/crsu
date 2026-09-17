@@ -171,6 +171,7 @@ pub fn run_crsu(
 ) -> Output {
     let mut command = Command::new(crsu_binary());
     command.args(arguments);
+    command.env("CRSU_NO_CLIPBOARD", "1");
     if let Some(directory) = directory {
         command.current_dir(directory);
     }

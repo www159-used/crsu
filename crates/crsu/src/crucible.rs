@@ -259,7 +259,7 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
     };
     config.validate_anchor()?;
 
-    if let Some(review_id) = review_diff.review_id() {
+    if let Some(review_id) = review_to_update(&config, review_diff.review_id())? {
         let update = update_review(&config, review_id, review_diff)?;
         return Ok(Some(Submission {
             review_id: review_id.to_owned(),
@@ -329,11 +329,33 @@ pub fn submit_confirmation(review_diff: &ReviewDiff) -> Result<Option<String>, C
         return Ok(None);
     };
     config.validate_anchor()?;
-    Ok(Some(if let Some(review_id) = review_diff.review_id() {
-        format!("submit update patch to {review_id}? [y/N] ")
+    Ok(Some(
+        if let Some(review_id) = review_to_update(&config, review_diff.review_id())? {
+            format!("submit update patch to {review_id}? [y/N] ")
+        } else {
+            format!("submit new review to {}? [y/N] ", config.project)
+        },
+    ))
+}
+
+fn review_to_update<'a>(
+    config: &Config,
+    review_id: Option<&'a str>,
+) -> Result<Option<&'a str>, CrucibleError> {
+    let Some(review_id) = review_id else {
+        return Ok(None);
+    };
+    let review = get_json(config, &format!("rest-service/reviews-v1/{review_id}"))?;
+    let state = review.get("state").and_then(Value::as_str).unwrap_or("");
+    if finished_review_state(state) {
+        Ok(None)
     } else {
-        format!("submit new review to {}? [y/N] ", config.project)
-    }))
+        Ok(Some(review_id))
+    }
+}
+
+fn finished_review_state(state: &str) -> bool {
+    matches!(state, "Closed" | "Dead" | "Abandoned")
 }
 
 pub struct LandReview {
@@ -352,6 +374,12 @@ pub fn land_review(config: &Config, review_id: &str) -> Result<LandReview, Cruci
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    if finished_review_state(&state) {
+        return Err(CrucibleError::ReviewFinished {
+            review_id: review_id.to_owned(),
+            state,
+        });
+    }
     let objectives = review
         .get("description")
         .and_then(Value::as_str)
@@ -1516,6 +1544,10 @@ pub enum CrucibleError {
     TitleUpdateRejected,
     ObjectivesUpdateRejected,
     WaitingForReview,
+    ReviewFinished {
+        review_id: String,
+        state: String,
+    },
     EmptyComment,
     CommentNotFound(String),
     NoCommentsToUpdate,
@@ -1553,6 +1585,9 @@ impl fmt::Display for CrucibleError {
                 write!(formatter, "Crucible did not update the review objectives")
             }
             Self::WaitingForReview => write!(formatter, "waiting for review"),
+            Self::ReviewFinished { review_id, state } => {
+                write!(formatter, "{review_id} is {state}; refuse to land")
+            }
             Self::EmptyComment => write!(formatter, "comment message must not be empty"),
             Self::CommentNotFound(comment_id) => {
                 write!(formatter, "comment not found: {comment_id}")

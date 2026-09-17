@@ -52,6 +52,14 @@ pub struct InitFixture {
 pub struct ReviewFixture {
     pub token: String,
     pub response: ReviewResponse,
+    pub predecessor: Option<PredecessorReview>,
+}
+
+/// A finished review that `diff` should replace instead of update.
+#[derive(Clone, Debug)]
+pub struct PredecessorReview {
+    pub review_id: String,
+    pub state: String,
 }
 
 /// One land conversation: fetch review/reviewers, then close.
@@ -598,6 +606,22 @@ fn handle_review(
             }
             ReviewResponse::Updated { .. } => Err("unexpected create-review request".to_owned()),
         };
+    }
+    if method == "GET"
+        && let Some(predecessor) = &fixture.predecessor
+        && path == format!("/rest-service/reviews-v1/{}", predecessor.review_id)
+    {
+        return Ok((
+            200,
+            review_json(&ReviewSnapshot {
+                id: predecessor.review_id.clone(),
+                title: String::new(),
+                objectives: String::new(),
+                state: predecessor.state.clone(),
+                reviewers: Vec::new(),
+            })
+            .to_string(),
+        ));
     }
     if method == "GET"
         && let Some(review_id) = review_id(&fixture.response)

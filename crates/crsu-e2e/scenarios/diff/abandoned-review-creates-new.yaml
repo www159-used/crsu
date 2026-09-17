@@ -1,0 +1,34 @@
+name: an abandoned review in HEAD starts a new review
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "after abandon\n"
+  feature_message: |-
+    fix: follow-up after abandon
+
+    Url: http://crucible/cru/COMMON-123
+command: [diff, --yes, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers: [alice]
+  review_id: COMMON-201
+  previous_review_id: COMMON-123
+  previous_state: Dead
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-201"
+  head_body_contains:
+    - "/cru/COMMON-201"
+  review:
+    title: "fix: follow-up after abandon"
+    objectives: |-
+      [ branch: feature ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review

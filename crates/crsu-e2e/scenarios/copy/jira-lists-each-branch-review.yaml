@@ -1,0 +1,17 @@
+name: copy --jira lists each branch review from Url trailers
+repository:
+  reviews:
+    - branch: four-six
+      title: "[TIC-10733] fix: fd leak"
+      target: origin/4.6
+      url: http://crucible/cru/LP-1476
+    - branch: five-oh
+      title: "[TIC-10733] fix: fd leak"
+      target: origin/5.0
+      url: http://crucible/cru/LP-1478
+command: [copy, --jira, TIC-10733]
+expect:
+  success: true
+  stdout_contains:
+    - "[origin/4.6] [TIC-10733] fix: fd leak http://crucible/cru/LP-1476"
+    - "[origin/5.0] [TIC-10733] fix: fd leak http://crucible/cru/LP-1478"

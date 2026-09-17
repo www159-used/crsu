@@ -29,11 +29,13 @@ description: >-
 
 工作区干净。基线写合入目标，例如 `origin/master`，不要写当前 feature 自己的 upstream。非交互加 `-y`。
 
-成功后看 stdout 的 Review 行，以及 HEAD 提交里的 `Url:`。剪贴板摘要用 `crsu copy`，不要为了抄摘要去 fetch。
+HEAD 里的 `Url:` 指向未关闭的评审时追加 patch；评审已关闭或已放弃则新建，并改写 `Url:`。
+
+成功后看 stdout 的 Review 行，以及 HEAD 提交里的 `Url:`。当前 HEAD 摘要用 `crsu copy`。同一 JIRA 铺了多条分支时用 `crsu copy --jira TIC-xxxx`，只读各提交的 `Url:`；有 `[ target: ]` 用它，没有就用分支名（存在 `origin/<branch>` 则写成 `origin/<branch>`）。不要 checkout 或 fetch。stdout 和剪贴板都是那几行摘要。V22 不要走 `--jira`。
 
 ## 合入
 
-`crsu land -y`。首版只做同分支、单个 commit。评审里的 `[ target: ]` 必须和即将 push 的分支一致，对不上要用 `--force`，不要假装跨分支 merge。还没人 complete 就不要 land。冲突停下来，交给用户 rebase。
+`crsu land -y`。首版只做同分支、单个 commit。评审里的 `[ target: ]` 必须和即将 push 的分支一致，对不上要用 `--force`，不要假装跨分支 merge。还没人 complete 就不要 land。评审已关闭或已放弃不要 land，不要 rebase，不要 push。冲突停下来，交给用户 rebase。
 
 ## 评论
 

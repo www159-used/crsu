@@ -42,6 +42,16 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
 
     let server = MockCrucible::start_review(ReviewFixture {
         token: crucible.token.clone(),
+        predecessor: match (
+            crucible.previous_review_id.as_deref(),
+            crucible.previous_state.as_deref(),
+        ) {
+            (Some(review_id), Some(state)) => Some(crsu_testkit::PredecessorReview {
+                review_id: review_id.to_owned(),
+                state: state.to_owned(),
+            }),
+            _ => None,
+        },
         response: crucible.response.as_ref().map_or_else(
             || {
                 let review_id = crucible.review_id.clone().expect("successful review id");
@@ -196,6 +206,8 @@ struct Crucible {
     current_title: Option<String>,
     current_objectives: Option<String>,
     current_state: Option<String>,
+    previous_review_id: Option<String>,
+    previous_state: Option<String>,
     response: Option<CrucibleResponse>,
 }
 

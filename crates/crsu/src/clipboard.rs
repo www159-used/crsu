@@ -12,6 +12,9 @@ pub fn summary(target: &str, title: &str, url: &str) -> String {
 ///
 /// Returns [`Error`] when the clipboard backend is unavailable or rejects the write.
 pub fn copy(text: &str) -> Result<(), Error> {
+    if std::env::var_os("CRSU_NO_CLIPBOARD").is_some() {
+        return Ok(());
+    }
     arboard::Clipboard::new()
         .and_then(|mut clipboard| clipboard.set_text(text.to_owned()))
         .map_err(Error)

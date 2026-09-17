@@ -4,6 +4,8 @@
 mod comments;
 #[path = "support/common.rs"]
 mod common;
+#[path = "support/copy.rs"]
+mod copy;
 #[path = "support/diff.rs"]
 mod diff;
 #[path = "support/init.rs"]
@@ -48,6 +50,7 @@ fn main() {
 fn run(category: &str, path: &Path) {
     match category {
         "comments" => comments::run(path),
+        "copy" => copy::run(path),
         "diff" => diff::run(path),
         "init" => init::run(path),
         "land" => land::run(path),

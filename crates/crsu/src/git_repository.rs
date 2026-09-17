@@ -9,6 +9,14 @@ pub struct Repository {
     common_dir: PathBuf,
 }
 
+/// One review summary collected from a commit message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewShare {
+    pub target: String,
+    pub title: String,
+    pub url: String,
+}
+
 /// 可提交给代码评审系统的 Git 差异。
 pub struct ReviewDiff {
     base: String,
@@ -96,6 +104,99 @@ impl Repository {
         let message = self.commit_message("HEAD")?;
         let amended = managed_commit_message(&message, review_url, reviewers, &[]);
         self.commit_with_message(&amended, true)
+    }
+
+    /// Collects `[target] title url` lines for a JIRA key without checking out branches.
+    pub fn review_shares(
+        &self,
+        jira: &str,
+        branches: &[String],
+    ) -> Result<Vec<ReviewShare>, Error> {
+        let refs = if branches.is_empty() {
+            self.copy_scan_refs()?
+        } else {
+            branches.to_vec()
+        };
+        let mut by_url = std::collections::BTreeMap::new();
+        for git_ref in refs {
+            let Some(hash) = self.newest_commit_mentioning(&git_ref, jira)? else {
+                continue;
+            };
+            let message = self.commit_message(&hash)?;
+            let fallback = self.display_target(&git_ref);
+            let Some(share) = share_from_message(&message, &fallback) else {
+                continue;
+            };
+            by_url
+                .entry(share.url.clone())
+                .and_modify(|existing: &mut ReviewShare| {
+                    if prefer_origin_target(&share.target, &existing.target) {
+                        *existing = share.clone();
+                    }
+                })
+                .or_insert(share);
+        }
+        let mut shares = by_url.into_values().collect::<Vec<_>>();
+        shares.sort_by(|left, right| left.target.cmp(&right.target));
+        if shares.is_empty() {
+            Err(Error::NoJiraReviews {
+                jira: jira.to_owned(),
+            })
+        } else {
+            Ok(shares)
+        }
+    }
+
+    /// Collects `[target] title url` from each ref tip without checking out.
+    pub fn review_shares_at_refs(&self, refs: &[String]) -> Result<Vec<ReviewShare>, Error> {
+        let mut shares = Vec::new();
+        for git_ref in refs {
+            let message = self.commit_message(git_ref)?;
+            let fallback = self.display_target(git_ref);
+            if let Some(share) = share_from_message(&message, &fallback) {
+                shares.push(share);
+            }
+        }
+        if shares.is_empty() {
+            Err(Error::NoJiraReviews {
+                jira: refs.join(","),
+            })
+        } else {
+            Ok(shares)
+        }
+    }
+
+    fn newest_commit_mentioning(&self, git_ref: &str, jira: &str) -> Result<Option<String>, Error> {
+        let grep = format!("--grep={jira}");
+        let hashes = self.git(&["log", git_ref, "-F", &grep, "--format=%H"])?;
+        Ok(lines(&hashes).into_iter().next())
+    }
+
+    fn copy_scan_refs(&self) -> Result<Vec<String>, Error> {
+        let remotes = self.git(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/origin",
+        ])?;
+        let heads = self.git(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])?;
+        Ok(lines(&remotes)
+            .into_iter()
+            .chain(lines(&heads))
+            .filter(|git_ref| git_ref != "origin/HEAD")
+            .collect())
+    }
+
+    fn display_target(&self, git_ref: &str) -> String {
+        let name = land_ref_key(git_ref);
+        let origin = format!("origin/{name}");
+        if self
+            .git(&["rev-parse", "--verify", &format!("{origin}^{{commit}}")])
+            .is_ok()
+        {
+            origin
+        } else {
+            git_ref.to_owned()
+        }
     }
 
     /// Collects the clipboard summary fields from HEAD without requiring a clean worktree.
@@ -279,6 +380,10 @@ impl Repository {
         command_output(&self.work_tree, arguments)
     }
 
+    fn git(&self, arguments: &[&str]) -> Result<String, Error> {
+        command_output_slice(&self.work_tree, arguments)
+    }
+
     fn output_untrimmed<const N: usize>(&self, arguments: [&str; N]) -> Result<String, Error> {
         command_output_untrimmed(&self.work_tree, arguments)
     }
@@ -405,6 +510,25 @@ fn objectives(message: &str, branch: &str, target: &str, last_tag: &str) -> Stri
     }
 }
 
+fn share_from_message(message: &str, fallback_target: &str) -> Option<ReviewShare> {
+    let url = review_url_from_message(message)?;
+    let title = message.lines().next()?.trim();
+    if title.is_empty() {
+        return None;
+    }
+    Some(ReviewShare {
+        target: target_from_objectives(message)
+            .unwrap_or(fallback_target)
+            .to_owned(),
+        title: title.to_owned(),
+        url,
+    })
+}
+
+fn prefer_origin_target(new: &str, old: &str) -> bool {
+    new.starts_with("origin/") && !old.starts_with("origin/")
+}
+
 pub(crate) fn target_from_objectives(objectives: &str) -> Option<&str> {
     objectives.lines().find_map(|line| {
         let target = line
@@ -455,6 +579,10 @@ fn command_output<const N: usize>(
     working_directory: &Path,
     arguments: [&str; N],
 ) -> Result<String, Error> {
+    command_output_slice(working_directory, &arguments)
+}
+
+fn command_output_slice(working_directory: &Path, arguments: &[&str]) -> Result<String, Error> {
     let output = Command::new("git")
         .args(arguments)
         .current_dir(working_directory)
@@ -504,6 +632,7 @@ pub enum Error {
     NoDefaultBase,
     NoUpstream { branch: String },
     NoReviewUrl,
+    NoJiraReviews { jira: String },
     NothingToLand,
     MultipleCommits { count: usize },
     MissingReviewTarget,
@@ -532,6 +661,9 @@ impl fmt::Display for Error {
                 formatter,
                 "HEAD commit has no Crucible Url; run crsu diff first"
             ),
+            Self::NoJiraReviews { jira } => {
+                write!(formatter, "no reviews with a Url: trailer for {jira}")
+            }
             Self::NothingToLand => write!(formatter, "nothing to land"),
             Self::MultipleCommits { count } => write!(
                 formatter,
@@ -563,7 +695,7 @@ impl fmt::Display for Error {
 mod tests {
     use super::{
         land_ref_key, managed_commit_message, review_id_from_message, review_url_from_message,
-        target_from_objectives,
+        share_from_message, target_from_objectives,
     };
 
     #[test]
@@ -601,6 +733,30 @@ mod tests {
         assert!(first.contains("Reviewed By:"));
         assert!(first.contains("Url: http://cru/cru/LP-2"));
         assert!(!first.contains("http://old"));
+    }
+
+    #[test]
+    fn reads_share_line_fields_from_a_review_commit() {
+        let message = "\
+[TIC-10733] fix: fd leak
+
+[ branch: four-six ]
+[ target: origin/4.6 ]
+[ last_tag: None ]
+
+Url: http://crucible/cru/LP-1476
+";
+        let share = share_from_message(message, "origin/5.0").expect("share");
+        assert_eq!(share.target, "origin/4.6");
+        assert_eq!(share.title, "[TIC-10733] fix: fd leak");
+        assert_eq!(share.url, "http://crucible/cru/LP-1476");
+        let inferred = share_from_message(
+            "[TIC-10733] fix: fd leak\n\nUrl: http://crucible/cru/LP-1476\n",
+            "origin/4.6",
+        )
+        .expect("inferred");
+        assert_eq!(inferred.target, "origin/4.6");
+        assert_eq!(share_from_message("fix: no url", "origin/4.6"), None);
     }
 
     #[test]

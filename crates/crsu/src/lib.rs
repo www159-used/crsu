@@ -127,10 +127,16 @@ enum Command {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
-    /// 将当前评审摘要复制到剪贴板：`[base] title url`。
+    /// 输出评审摘要：`[base] title url`。默认复制当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支。
     Copy {
         /// 作为合入目标显示的 Git ref；默认使用当前 upstream。
         base: Option<String>,
+        /// 按 JIRA 编号收集各分支已出评审的摘要，只读 git，不 checkout。
+        #[arg(long, conflicts_with = "base")]
+        jira: Option<String>,
+        /// 只看这些 ref；可与 `--jira` 合用。逗号分隔。
+        #[arg(long, value_delimiter = ',', num_args = 1.., conflicts_with = "base")]
+        branches: Vec<String>,
     },
     /// 生成 shell 补全脚本。
     Completions {
@@ -324,7 +330,11 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
         Command::Diff { base, attach, yes } => diff(base.as_deref(), attach.as_deref(), yes),
-        Command::Copy { base } => copy(base.as_deref()),
+        Command::Copy {
+            base,
+            jira,
+            branches,
+        } => copy(base.as_deref(), jira.as_deref(), &branches),
         Command::Completions { shell } => completions(shell),
         Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
         Command::Comments { command } => comments_command(command),
@@ -492,7 +502,7 @@ fn confirm_yes(prompt: &str) -> bool {
     line.trim().eq_ignore_ascii_case("y")
 }
 
-fn copy(base: Option<&str>) -> ExitCode {
+fn copy(base: Option<&str>, jira: Option<&str>, branches: &[String]) -> ExitCode {
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -500,6 +510,9 @@ fn copy(base: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if jira.is_some() || !branches.is_empty() {
+        return copy_batch(&repository, jira, branches);
+    }
     let (base, title, url) = match repository.share_summary(base) {
         Ok(parts) => parts,
         Err(error) => {
@@ -513,6 +526,37 @@ fn copy(base: Option<&str>) -> ExitCode {
             println!("Clipboard: {summary}");
             ExitCode::SUCCESS
         }
+        Err(error) => {
+            eprintln!("clipboard failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn copy_batch(
+    repository: &git_repository::Repository,
+    jira: Option<&str>,
+    branches: &[String],
+) -> ExitCode {
+    let shares = match jira {
+        Some(jira) => repository.review_shares(jira, branches),
+        None => repository.review_shares_at_refs(branches),
+    };
+    let shares = match shares {
+        Ok(shares) => shares,
+        Err(error) => {
+            eprintln!("copy failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let summary = shares
+        .iter()
+        .map(|share| clipboard::summary(&share.target, &share.title, &share.url))
+        .collect::<Vec<_>>()
+        .join("\n");
+    println!("{summary}");
+    match clipboard::copy(&summary) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("clipboard failed: {error}");
             ExitCode::FAILURE

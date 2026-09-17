@@ -1,0 +1,15 @@
+name: copy --jira infers target from the branch when the commit has no target line
+repository:
+  reviews:
+    - branch: "4.6"
+      title: "[TIC-10733] fix: fd leak"
+      url: http://crucible/cru/LP-1476
+    - branch: "5.0"
+      title: "[TIC-10733] fix: fd leak"
+      url: http://crucible/cru/LP-1478
+command: [copy, --jira, TIC-10733]
+expect:
+  success: true
+  stdout_contains:
+    - "[4.6] [TIC-10733] fix: fd leak http://crucible/cru/LP-1476"
+    - "[5.0] [TIC-10733] fix: fd leak http://crucible/cru/LP-1478"

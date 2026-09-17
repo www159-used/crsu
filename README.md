@@ -13,6 +13,8 @@
 ```text
 crsu doctor
 crsu diff [base]
+crsu copy [base]
+crsu copy --jira TIC-xxxx
 crsu land [target]
 crsu comments
 crsu comments list [REVIEW_ID]
@@ -34,8 +36,9 @@ crsu patches prune
   不保存密码。项目与仓库候选从 Crucible 实时读取；有 `fzf` 时可搜索选择，没有则降级为
   编号选择。结果写入共享 Git 目录的 `.git/crsu/config.toml`（权限 `0600`）。
 - `diff`：基于可选基线生成 patch；优先读取环境变量，其次读取 `.git/crsu/config.toml`
-  创建 Crucible review。
-- `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。
+  创建 Crucible review。HEAD 里已有未关闭的评审则追加 patch；已关闭或已放弃则新建。
+- `copy`：输出 `[target] title url` 并写入剪贴板。默认当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支，只读、不 checkout。没有 `[ target: ]` 时用分支名。
+- `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。评审已关闭或已放弃直接拒绝，不 rebase、不 push。
 - `comments`：从 Crucible 拉取或修改评审评论，stdout 输出稳定 JSON。省略 review id 时从 HEAD 的 `Url:` 读取。`reply` 回复一条评论；`edit` / `update` 改写自己的评论；`delete` / `rm` 删除自己的评论；`unresolve` / `needs-resolve` 标成 Needs resolution；`resolve` / `mark-resolved` 标成 Resolved；`defect` / `raise-defect` 标成缺陷；`undefect` / `clear-defect` 取消缺陷。Crucible 只允许改/删自己的评论。
 - `patches`：列出或删除评审上的过往 patch（`-na` / `diff` 每次追加的全量）。`list` 只输出元数据；`delete` 删指定块；`prune` 只留最新。挂着未删行内评论的 patch 会跳过，不挡整次清理。`diff` 不会自动 prune。
 
