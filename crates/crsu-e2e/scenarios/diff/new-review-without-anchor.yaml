@@ -6,7 +6,7 @@ repository:
   feature_branch: feature
   feature_files:
     README.md: "feature\n"
-command: [diff, main]
+command: [diff, --yes, main]
 crucible:
   project: COMMON
   token: test-token

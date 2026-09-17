@@ -10,7 +10,7 @@ repository:
     fix: update open review
 
     Url: http://crucible/cru/COMMON-123
-command: [diff, main]
+command: [diff, --yes, main]
 crucible:
   project: COMMON
   repository: java-common

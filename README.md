@@ -54,5 +54,5 @@ cargo run -- init
 
 ## 非目标
 
-第一版不迁移 Jira、Jenkins、发布、tag、release note、cherry-pick/rebase、剪贴板，
+第一版不迁移 Jira、Jenkins、发布、tag、release note、cherry-pick/rebase，
 以及 Hg/SVN/CVS/P4 支持。

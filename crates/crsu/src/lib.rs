@@ -1,12 +1,13 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::process::ExitCode;
 
+mod clipboard;
 mod crucible;
+mod crucible_conf;
 mod git_repository;
 mod init_model;
 mod init_tui;
 mod init_workflow;
-mod legacy_cru;
 mod project_config;
 
 /// Narrow test-only interface for exercising init behavior from a separate crate.
@@ -122,6 +123,9 @@ enum Command {
         /// 将当前 HEAD 关联到已经存在的 Crucible review。
         #[arg(long, value_name = "REVIEW_ID", conflicts_with = "base")]
         attach: Option<String>,
+        /// 跳过提交 patch 前的确认提示。
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
     },
     /// 将当前分支合入可选的目标分支。
     Land {
@@ -181,7 +185,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Init => init_tui::run(),
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
-        Command::Diff { base, attach } => diff(base.as_deref(), attach.as_deref()),
+        Command::Diff { base, attach, yes } => diff(base.as_deref(), attach.as_deref(), yes),
         Command::Land { target } => not_implemented("land", target.as_deref()),
     }
 }
@@ -263,7 +267,7 @@ fn config(command: ConfigCommand) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn diff(base: Option<&str>, attach: Option<&str>) -> ExitCode {
+fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -279,27 +283,49 @@ fn diff(base: Option<&str>, attach: Option<&str>) -> ExitCode {
             println!("Base: {}", review_diff.base());
             println!("Commits: {}", review_diff.commit_count());
             println!("Patch bytes: {}", review_diff.patch_len());
-            match crucible::submit_if_configured(&review_diff) {
-                Ok(Some(submission)) => {
-                    println!("Review: {}", submission.review_id());
-                    if let Some((previous, current)) = submission.title_update() {
-                        println!("Title updated: {previous} -> {current}");
+            match crucible::submit_confirmation(&review_diff) {
+                Ok(None) => {}
+                Ok(Some(prompt)) => {
+                    if !yes && !confirm_yes(&prompt) {
+                        println!("Aborted");
+                        return ExitCode::SUCCESS;
                     }
-                    if submission.objectives_were_updated() {
-                        println!("Objectives updated");
-                    }
-                    if submission.was_created()
-                        && let Err(error) = repository
-                            .attach_review(submission.review_url(), submission.reviewers())
-                    {
-                        eprintln!(
-                            "diff failed: review {} was created, but Git association failed: {error}",
-                            submission.review_id()
-                        );
-                        return ExitCode::FAILURE;
+                    match crucible::submit_if_configured(&review_diff) {
+                        Ok(Some(submission)) => {
+                            println!("Review: {}", submission.review_id());
+                            if let Some((previous, current)) = submission.title_update() {
+                                println!("Title updated: {previous} -> {current}");
+                            }
+                            if submission.objectives_were_updated() {
+                                println!("Objectives updated");
+                            }
+                            let clipboard = clipboard::summary(
+                                review_diff.base(),
+                                review_diff.title(),
+                                submission.review_url(),
+                            );
+                            match clipboard::copy(&clipboard) {
+                                Ok(()) => println!("Clipboard: {clipboard}"),
+                                Err(error) => eprintln!("clipboard failed: {error}"),
+                            }
+                            if submission.was_created()
+                                && let Err(error) = repository
+                                    .attach_review(submission.review_url(), submission.reviewers())
+                            {
+                                eprintln!(
+                                    "diff failed: review {} was created, but Git association failed: {error}",
+                                    submission.review_id()
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!("diff failed: {error}");
+                            return ExitCode::FAILURE;
+                        }
                     }
                 }
-                Ok(None) => {}
                 Err(error) => {
                     eprintln!("diff failed: {error}");
                     return ExitCode::FAILURE;
@@ -312,6 +338,16 @@ fn diff(base: Option<&str>, attach: Option<&str>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn confirm_yes(prompt: &str) -> bool {
+    eprint!("{prompt}");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
+    line.trim().eq_ignore_ascii_case("y")
 }
 
 fn attach_review(repository: &git_repository::Repository, review_id: &str) -> ExitCode {

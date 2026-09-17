@@ -245,7 +245,7 @@ struct App {
 }
 impl App {
     fn new() -> Self {
-        let defaults = crate::legacy_cru::defaults();
+        let defaults = crate::crucible_conf::defaults();
         Self {
             flow: FormFlow::new(),
             url: defaults.url,

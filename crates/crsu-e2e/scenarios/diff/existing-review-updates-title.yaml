@@ -14,6 +14,7 @@ repository:
     Url: http://crucible/cru/COMMON-123
 command:
   - diff
+  - --yes
   - main
 crucible:
   project: COMMON

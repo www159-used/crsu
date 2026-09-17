@@ -308,6 +308,23 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
     }))
 }
 
+/// Returns the interactive confirmation prompt when a Crucible submit is configured.
+///
+/// # Errors
+///
+/// Returns configuration or anchor-validation errors before the caller prompts.
+pub fn submit_confirmation(review_diff: &ReviewDiff) -> Result<Option<String>, CrucibleError> {
+    let Some(config) = Config::from_environment()? else {
+        return Ok(None);
+    };
+    config.validate_anchor()?;
+    Ok(Some(if let Some(review_id) = review_diff.review_id() {
+        format!("submit update patch to {review_id}? [y/N] ")
+    } else {
+        format!("submit new review to {}? [y/N] ", config.project)
+    }))
+}
+
 fn start_review(config: &Config, review_id: &str) -> Result<(), CrucibleError> {
     let response = config
         .http

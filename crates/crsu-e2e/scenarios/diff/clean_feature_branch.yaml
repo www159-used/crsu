@@ -12,6 +12,7 @@ repository:
     Summary: explain why the feature is needed
 command:
   - diff
+  - --yes
   - main
 crucible:
   project: COMMON

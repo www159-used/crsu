@@ -8,6 +8,7 @@ repository:
     README.md: "feature\n"
 command:
   - diff
+  - --yes
   - main
 crucible:
   project: COMMON
