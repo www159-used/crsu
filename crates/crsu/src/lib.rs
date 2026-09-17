@@ -5,6 +5,7 @@ mod clipboard;
 mod crucible;
 mod crucible_conf;
 mod git_repository;
+mod hooks;
 mod init_model;
 mod init_tui;
 mod init_workflow;
@@ -441,6 +442,20 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
             println!("Base: {}", review_diff.base());
             println!("Commits: {}", review_diff.commit_count());
             println!("Patch bytes: {}", review_diff.patch_len());
+            if let Err(error) = hooks::run_pre(
+                &repository,
+                "pre-diff",
+                &serde_json::json!({
+                    "event": "pre-diff",
+                    "command": "diff",
+                    "base": review_diff.base(),
+                    "title": review_diff.title(),
+                    "review_id": review_diff.review_id(),
+                }),
+            ) {
+                eprintln!("diff failed: {error}");
+                return ExitCode::FAILURE;
+            }
             match crucible::submit_confirmation(&review_diff) {
                 Ok(None) => {}
                 Ok(Some(prompt)) => {
@@ -476,6 +491,17 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
                                 );
                                 return ExitCode::FAILURE;
                             }
+                            hooks::run_post(
+                                &repository,
+                                "post-diff",
+                                &serde_json::json!({
+                                    "event": "post-diff",
+                                    "command": "diff",
+                                    "action": if submission.was_created() { "created" } else { "updated" },
+                                    "review_id": submission.review_id(),
+                                    "url": submission.review_url(),
+                                }),
+                            );
                         }
                         Ok(None) => {}
                         Err(error) => {
@@ -775,6 +801,20 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
             return land_failed(error);
         }
     }
+    if let Err(error) = hooks::run_pre(
+        &repository,
+        "pre-land",
+        &serde_json::json!({
+            "event": "pre-land",
+            "command": "land",
+            "review_id": acceptance.review_id,
+            "url": acceptance.review_url,
+            "branch": current,
+            "target": review_target,
+        }),
+    ) {
+        return land_failed(error);
+    }
     if let Err(error) = repository.prepare_land_commit(
         &acceptance.review_url,
         &acceptance.reviewers,
@@ -805,6 +845,18 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     println!("Closed: {}", acceptance.review_id);
+    hooks::run_post(
+        &repository,
+        "post-land",
+        &serde_json::json!({
+            "event": "post-land",
+            "command": "land",
+            "review_id": acceptance.review_id,
+            "url": acceptance.review_url,
+            "branch": current,
+            "target": review_target,
+        }),
+    );
     ExitCode::SUCCESS
 }
 

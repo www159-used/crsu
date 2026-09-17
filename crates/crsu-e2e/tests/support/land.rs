@@ -2,7 +2,8 @@
 
 use super::common::{
     CrucibleEnv, Expectation, assert_contains_all, assert_no_token_leak, assert_scenario,
-    create_origin, init_repository, load_yaml, run_crsu, run_git, write_files,
+    assert_stdout_json, captured_hook_json, create_origin, init_repository, install_crsu_hooks,
+    load_yaml, run_crsu, run_git, write_files,
 };
 use crsu_testkit::{LandFixture, LandReviewer, MockCrucible};
 use serde::Deserialize;
@@ -16,6 +17,7 @@ pub fn run(path: &Path) {
 
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
+    install_crsu_hooks(&repository.working_directory, &scenario.hooks);
     let server = MockCrucible::start_land(&LandFixture {
         token: scenario.crucible.token.clone(),
         review_id: scenario.crucible.review_id.clone(),
@@ -43,6 +45,14 @@ fn run_scenario(scenario: &Scenario) {
     assert_scenario(&scenario.name, &output, &scenario.expect);
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
     assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
+    if let Some(expected) = &scenario.expect.hook_json {
+        assert_stdout_json(
+            &scenario.name,
+            &captured_hook_json(&repository.working_directory),
+            expected,
+            Some((server.base_url().as_str(), "http://crucible")),
+        );
+    }
     assert_no_token_leak(&scenario.name, &output, &scenario.crucible.token);
 }
 
@@ -113,6 +123,8 @@ struct Scenario {
     repository: Repository,
     command: Vec<String>,
     crucible: Crucible,
+    #[serde(default)]
+    hooks: BTreeMap<String, String>,
     expect: Expectation,
 }
 

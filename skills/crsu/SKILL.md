@@ -28,6 +28,8 @@ description: >-
 
 `patches` 清过往全量 patch。`diff` 只追加，不会自动删旧的。
 
+`pre-diff` / `pre-land` / `post-diff` / `post-land` 是 `.git/crsu/hooks/` 下的可执行文件。stdin 为 JSON。pre 非 0 则中止命令；post 在成功后跑，失败不回滚，用来关 agent session、清 zellij tab。没有 hook 就是空操作。
+
 ## 出评审
 
 工作区干净。基线写合入目标，例如 `origin/master`，不要写当前 feature 自己的 upstream。非交互加 `-y`。
@@ -85,6 +87,18 @@ crsu patches prune
 ```
 
 list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`latest`。正文不输出。`delete` / `prune` 返回 `deleted`、`kept`、`skipped`。`skipped.reason` 为 `has_comments` 时整次仍成功。id 用 `37473` 或 `PATCH:37473`。
+
+## Hook
+
+可执行文件：`.git/crsu/hooks/pre-diff`、`post-diff`、`pre-land`、`post-land`（共享 git 目录，linked worktree 也能看到）。stdin 一段 JSON。
+
+```json
+{"version":1,"event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature"}
+```
+
+`version` 是 hook 协议版本。多出来的键可以忽略；`version` 升了再按新合同解析。只在字段改义或删除时升版本。
+
+`pre-*` 在提交评审或 rebase/push 之前；非 0 退出则命令失败。`post-*` 只在成功后跑，失败只警告，用来删 agent session、清 zellij tab。不要用 hook 代替 git/bash 做扫描或 rebase。
 
 ## 不要做
 

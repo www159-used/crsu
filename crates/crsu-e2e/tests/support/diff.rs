@@ -2,7 +2,8 @@
 
 use super::common::{
     CrucibleEnv, Expectation, assert_contains_all, assert_no_token_leak, assert_scenario,
-    create_origin, init_repository, load_yaml, run_crsu, run_git, write_files,
+    assert_stdout_json, captured_hook_json, create_origin, init_repository, install_crsu_hooks,
+    load_yaml, run_crsu, run_git, write_files,
 };
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
@@ -17,6 +18,7 @@ pub fn run(path: &Path) {
 
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
+    install_crsu_hooks(&repository.working_directory, &scenario.hooks);
     let output = run_with_optional_crucible(&repository, scenario);
 
     assert_scenario(&scenario.name, &output, &scenario.expect);
@@ -91,6 +93,14 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
         Some(&env),
     );
     server.assert_review_request();
+    if let Some(expected) = &scenario.expect.hook_json {
+        assert_stdout_json(
+            &scenario.name,
+            &captured_hook_json(&repository.working_directory),
+            expected,
+            Some((server.base_url().as_str(), "http://crucible")),
+        );
+    }
     if let Some(expected) = &scenario.expect.review {
         let actual = server.review();
         assert_eq!(
@@ -192,6 +202,8 @@ struct Scenario {
     repository: Repository,
     command: Vec<String>,
     crucible: Option<Crucible>,
+    #[serde(default)]
+    hooks: BTreeMap<String, String>,
     expect: Expectation,
 }
 

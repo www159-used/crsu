@@ -63,6 +63,35 @@ pub fn crsu_binary() -> &'static Path {
         .as_path()
 }
 
+/// Writes executable hook scripts under `.git/crsu/hooks/`.
+pub fn install_crsu_hooks(repository: &Path, hooks: &BTreeMap<String, String>) {
+    if hooks.is_empty() {
+        return;
+    }
+    let directory = repository.join(".git/crsu/hooks");
+    std::fs::create_dir_all(&directory).expect("create crsu hooks directory");
+    for (name, body) in hooks {
+        assert!(
+            name.chars()
+                .all(|character| character.is_ascii_lowercase() || character == '-'),
+            "invalid hook name {name}"
+        );
+        let path = directory.join(name);
+        std::fs::write(&path, body).expect("write hook script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("make hook executable");
+        }
+    }
+}
+
+pub fn captured_hook_json(repository: &Path) -> String {
+    std::fs::read_to_string(repository.join(".git/crsu/hooks/captured.json"))
+        .expect("read captured hook json")
+}
+
 pub fn write_files(repository: &Path, files: &BTreeMap<String, String>) {
     for (path, contents) in files {
         let path = repository.join(path);
@@ -215,6 +244,9 @@ pub struct Expectation {
     #[serde(default)]
     pub head_body_contains: Vec<String>,
     pub review: Option<ExpectedReview>,
+    /// JSON written by a hook script to `.git/crsu/hooks/captured.json`.
+    #[serde(default)]
+    pub hook_json: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]

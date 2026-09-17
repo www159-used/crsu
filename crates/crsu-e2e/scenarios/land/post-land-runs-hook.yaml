@@ -1,0 +1,44 @@
+name: post-land hook receives the closed review
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+  origin:
+    default_branch: main
+command: [land, --yes]
+hooks:
+  post-land: |
+    #!/bin/sh
+    cat > .git/crsu/hooks/captured.json
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  title: "fix: land me"
+  state: Review
+  objectives: |-
+    [ branch: feature ]
+    [ target: origin/feature ]
+    [ last_tag: None ]
+  reviewers:
+    - username: alice
+      completed: true
+expect:
+  success: true
+  stdout_contains:
+    - "Closed: COMMON-99"
+  hook_json:
+    version: 1
+    event: post-land
+    command: land
+    review_id: COMMON-99
+    url: http://crucible/cru/COMMON-99
+    branch: feature
+    target: origin/feature

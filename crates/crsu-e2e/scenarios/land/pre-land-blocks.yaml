@@ -1,0 +1,39 @@
+name: pre-land hook failure refuses to push
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+  origin:
+    default_branch: main
+command: [land, --yes]
+hooks:
+  pre-land: |
+    #!/bin/sh
+    echo keep the tab open >&2
+    exit 1
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  title: "fix: land me"
+  state: Review
+  objectives: |-
+    [ branch: feature ]
+    [ target: origin/feature ]
+    [ last_tag: None ]
+  reviewers:
+    - username: alice
+      completed: true
+expect:
+  success: false
+  stderr_contains:
+    - "pre-land hook exited 1: keep the tab open"
+  stdout_contains:
+    - "Review: COMMON-99"

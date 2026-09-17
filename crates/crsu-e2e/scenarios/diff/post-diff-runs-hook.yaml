@@ -1,0 +1,38 @@
+name: post-diff hook receives the created review
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+  feature_message: |-
+    feature change
+
+    Summary: explain why the feature is needed
+command:
+  - diff
+  - --yes
+  - main
+hooks:
+  post-diff: |
+    #!/bin/sh
+    cat > .git/crsu/hooks/captured.json
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers:
+    - alice
+  review_id: COMMON-123
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-123"
+  hook_json:
+    version: 1
+    event: post-diff
+    command: diff
+    action: created
+    review_id: COMMON-123
+    url: http://crucible/cru/COMMON-123
