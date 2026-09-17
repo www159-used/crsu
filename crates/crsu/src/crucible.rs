@@ -456,6 +456,279 @@ pub fn review_comments(review_id: &str) -> Result<ReviewComments, CrucibleError>
     Ok(parse_review_comments(review_id, &comments, &items))
 }
 
+/// One uploaded patch on a review, without the diff body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReviewPatch {
+    pub id: String,
+    pub source: String,
+    pub file: String,
+    pub uploaded: Option<String>,
+    pub comments: usize,
+    pub latest: bool,
+}
+
+/// Patches visible on a review.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReviewPatches {
+    pub review_id: String,
+    pub patches: Vec<ReviewPatch>,
+}
+
+/// A patch left in place because it still has line comments.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PatchSkip {
+    pub id: String,
+    pub reason: String,
+}
+
+/// Result of deleting one or more patches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PatchChange {
+    pub review_id: String,
+    pub deleted: Vec<String>,
+    pub kept: Vec<String>,
+    pub skipped: Vec<PatchSkip>,
+}
+
+/// Lists every patch on a review.
+///
+/// # Errors
+///
+/// Returns configuration or HTTP errors.
+pub fn review_patches(review_id: &str) -> Result<ReviewPatches, CrucibleError> {
+    let config = configured()?;
+    Ok(ReviewPatches {
+        review_id: review_id.to_owned(),
+        patches: load_patches(&config, review_id)?,
+    })
+}
+
+/// Deletes the named patches. Patches with live line comments are skipped.
+///
+/// # Errors
+///
+/// Returns configuration, lookup, or HTTP errors.
+pub fn delete_patches(review_id: &str, patch_ids: &[String]) -> Result<PatchChange, CrucibleError> {
+    if patch_ids.is_empty() {
+        return Err(CrucibleError::NoPatchesToUpdate);
+    }
+    let config = configured()?;
+    let patches = load_patches(&config, review_id)?;
+    apply_patch_deletes(&config, review_id, &patches, patch_ids)
+}
+
+/// Deletes every uncommented patch except the newest.
+///
+/// # Errors
+///
+/// Returns configuration or HTTP errors.
+pub fn prune_patches(review_id: &str) -> Result<PatchChange, CrucibleError> {
+    let config = configured()?;
+    let patches = load_patches(&config, review_id)?;
+    let stale: Vec<String> = patches
+        .iter()
+        .filter(|patch| !patch.latest)
+        .map(|patch| patch.id.clone())
+        .collect();
+    apply_patch_deletes(&config, review_id, &patches, &stale)
+}
+
+fn load_patches(config: &Config, review_id: &str) -> Result<Vec<ReviewPatch>, CrucibleError> {
+    let groups = get_json(
+        config,
+        &format!("rest-service/reviews-v1/{review_id}/patch"),
+    )?;
+    let comments = get_json(
+        config,
+        &format!("rest-service/reviews-v1/{review_id}/comments"),
+    )?;
+    let items = get_json(
+        config,
+        &format!("rest-service/reviews-v1/{review_id}/reviewitems"),
+    )?;
+    Ok(inventory_from_payloads(&groups, &comments, &items))
+}
+
+fn apply_patch_deletes(
+    config: &Config,
+    review_id: &str,
+    patches: &[ReviewPatch],
+    patch_ids: &[String],
+) -> Result<PatchChange, CrucibleError> {
+    let mut deleted = Vec::new();
+    let mut skipped = Vec::new();
+    for requested in patch_ids {
+        let id = patch_id_key(requested);
+        let Some(patch) = patches.iter().find(|patch| patch.id == id) else {
+            return Err(CrucibleError::PatchNotFound(id));
+        };
+        if patch.comments > 0 {
+            skipped.push(PatchSkip {
+                id,
+                reason: "has_comments".to_owned(),
+            });
+            continue;
+        }
+        let response = config_request(
+            config,
+            reqwest::Method::DELETE,
+            &format!("rest-service/reviews-v1/{review_id}/patch/{id}"),
+        )
+        .send()
+        .map_err(request_error)?;
+        response_body(response)?;
+        deleted.push(id);
+    }
+    let kept = patches
+        .iter()
+        .map(|patch| patch.id.clone())
+        .filter(|id| !deleted.contains(id))
+        .collect();
+    Ok(PatchChange {
+        review_id: review_id.to_owned(),
+        deleted,
+        kept,
+        skipped,
+    })
+}
+
+fn inventory_from_payloads(groups: &Value, comments: &Value, items: &Value) -> Vec<ReviewPatch> {
+    let item_patches = review_item_patch_ids(items);
+    let mut counts = BTreeMap::<String, usize>::new();
+    visit_live_comments(comments, &mut |comment| {
+        if let Some(item_id) = review_item_id(comment)
+            && let Some(patch_id) = item_patches.get(item_id)
+        {
+            *counts.entry(patch_id.clone()).or_default() += 1;
+        }
+    });
+
+    let mut patches = Vec::new();
+    for group in patch_groups(groups) {
+        let source = group
+            .get("sourceName")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        for patch in group
+            .get("patches")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            let Some(id) = json_id(patch) else {
+                continue;
+            };
+            patches.push(ReviewPatch {
+                comments: counts.get(&id).copied().unwrap_or_default(),
+                source: if source.is_empty() {
+                    format!("PATCH:{id}")
+                } else {
+                    source.to_owned()
+                },
+                file: patch
+                    .get("fileName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                uploaded: json_timestamp(patch.get("uploadDate")),
+                id,
+                latest: false,
+            });
+        }
+    }
+    if let Some(latest) = patches
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, patch)| (patch.uploaded.clone(), patch.id.clone()))
+        .map(|(index, _)| index)
+    {
+        patches[latest].latest = true;
+    }
+    patches
+}
+
+fn patch_groups(value: &Value) -> impl Iterator<Item = &Value> {
+    value
+        .get("patchGroup")
+        .and_then(Value::as_array)
+        .map(|groups| groups.iter())
+        .into_iter()
+        .flatten()
+}
+
+fn review_item_patch_ids(items: &Value) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let Some(entries) = items.get("reviewItem").and_then(Value::as_array) else {
+        return map;
+    };
+    for item in entries {
+        let Some(id) = item
+            .pointer("/permId/id")
+            .or_else(|| item.pointer("/permaId/id"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if let Some(patch_id) = item_patch_id(item) {
+            map.insert(id.to_owned(), patch_id);
+        }
+    }
+    map
+}
+
+fn item_patch_id(item: &Value) -> Option<String> {
+    if let Some(url) = item.get("patchUrl").and_then(Value::as_str)
+        && let Some((_, rest)) = url.split_once("/downloadpatch/")
+        && let Some(id) = rest.split('/').next()
+        && !id.is_empty()
+    {
+        return Some(id.to_owned());
+    }
+    item.get("repositoryName")
+        .and_then(Value::as_str)
+        .map(patch_id_key)
+        .filter(|id| !id.is_empty())
+}
+
+fn visit_live_comments(value: &Value, visit: &mut impl FnMut(&Value)) {
+    for comment in comment_values(value) {
+        if !comment
+            .get("deleted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            visit(comment);
+        }
+        if let Some(replies) = comment.get("replies") {
+            visit_live_comments(replies, visit);
+        }
+    }
+}
+
+fn patch_id_key(name: &str) -> String {
+    let text = name.trim();
+    text.strip_prefix("PATCH:")
+        .or_else(|| text.strip_prefix("PATCH-"))
+        .unwrap_or(text)
+        .to_owned()
+}
+
+fn json_id(value: &Value) -> Option<String> {
+    match value.get("id")? {
+        Value::Number(value) => Some(value.to_string()),
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn json_timestamp(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 /// A reply posted under an existing review comment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CommentReply {
@@ -1246,6 +1519,8 @@ pub enum CrucibleError {
     EmptyComment,
     CommentNotFound(String),
     NoCommentsToUpdate,
+    PatchNotFound(String),
+    NoPatchesToUpdate,
     MissingConfiguration(&'static str),
     ProjectConfiguration(String),
     AnchorMismatch {
@@ -1288,6 +1563,8 @@ impl fmt::Display for CrucibleError {
                     "no comments to update; pass comment ids or --all"
                 )
             }
+            Self::PatchNotFound(patch_id) => write!(formatter, "patch not found: {patch_id}"),
+            Self::NoPatchesToUpdate => write!(formatter, "no patches to delete; pass patch ids"),
             Self::MissingConfiguration(name) => write!(formatter, "missing {name}"),
             Self::ProjectConfiguration(error) => {
                 write!(formatter, "project configuration failed: {error}")
@@ -1535,5 +1812,66 @@ mod tests {
         assert_eq!(users[0].username, "a.user");
         assert_eq!(users[0].display_name, "A User");
         list.assert();
+    }
+
+    #[test]
+    fn maps_line_comments_onto_patches_and_marks_the_newest() {
+        let groups = serde_json::json!({
+            "patchGroup": [
+                {
+                    "sourceName": "PATCH:1",
+                    "patches": [{
+                        "id": 1,
+                        "fileName": "old.txt",
+                        "uploadDate": 10
+                    }]
+                },
+                {
+                    "sourceName": "PATCH:5",
+                    "patches": [{
+                        "id": 5,
+                        "fileName": "new.txt",
+                        "uploadDate": 20
+                    }]
+                }
+            ]
+        });
+        let comments = serde_json::json!({
+            "comments": [
+                {
+                    "message": "old note",
+                    "deleted": false,
+                    "reviewItemId": {"id": "CFR-1"}
+                },
+                {
+                    "message": "gone",
+                    "deleted": true,
+                    "reviewItemId": {"id": "CFR-1"}
+                },
+                {"message": "general"}
+            ]
+        });
+        let items = serde_json::json!({
+            "reviewItem": [
+                {
+                    "permId": {"id": "CFR-1"},
+                    "patchUrl": "/cru/LP-1/downloadpatch/1/old.txt"
+                },
+                {
+                    "permId": {"id": "CFR-5"},
+                    "repositoryName": "PATCH:5"
+                }
+            ]
+        });
+        let patches = super::inventory_from_payloads(&groups, &comments, &items);
+        assert_eq!(patches.len(), 2);
+        assert_eq!(patches[0].id, "1");
+        assert_eq!(patches[0].comments, 1);
+        assert!(!patches[0].latest);
+        assert_eq!(patches[1].id, "5");
+        assert_eq!(patches[1].comments, 0);
+        assert!(patches[1].latest);
+        assert_eq!(super::patch_id_key("PATCH:37473"), "37473");
+        assert_eq!(super::patch_id_key("37473"), "37473");
     }
 }

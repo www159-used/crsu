@@ -1,0 +1,40 @@
+name: patches reads the review id from HEAD when none is given
+repository:
+  files:
+    README.md: "feature\n"
+  message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+command: [patches]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  patches:
+    patchGroup:
+      - sourceName: "PATCH:1"
+        displayName: old.txt
+        patches:
+          - id: 1
+            fileName: old.txt
+            uploadDate: 10
+      - sourceName: "PATCH:5"
+        displayName: new.txt
+        patches:
+          - id: 5
+            fileName: new.txt
+            uploadDate: 20
+  comments:
+    comments: []
+  review_items:
+    reviewItem: []
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"id": "1"'
+    - '"id": "5"'
+    - '"file": "old.txt"'
+    - '"latest": true'
+    - '"comments": 0'

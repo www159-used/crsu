@@ -19,6 +19,7 @@ fn help_lists_the_initial_workflow_commands() {
     assert!(stdout.contains("completions"));
     assert!(stdout.contains("land"));
     assert!(stdout.contains("comments"));
+    assert!(stdout.contains("patches"));
 }
 
 #[test]
@@ -38,6 +39,20 @@ fn comments_help_lists_reply_and_resolution_commands() {
     assert!(stdout.contains("edit"));
     assert!(stdout.contains("defect"));
     assert!(stdout.contains("undefect"));
+}
+
+#[test]
+fn patches_help_lists_list_delete_and_prune() {
+    let output = crsu()
+        .args(["patches", "--help"])
+        .output()
+        .expect("run crsu patches --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("delete"));
+    assert!(stdout.contains("prune"));
 }
 
 #[test]

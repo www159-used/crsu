@@ -1,0 +1,53 @@
+name: patches prune keeps the newest and skips patches with comments
+command: [patches, prune, --review, COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  expected_deletes:
+    - "2"
+  patches:
+    patchGroup:
+      - sourceName: "PATCH:1"
+        patches:
+          - id: 1
+            fileName: commented.txt
+            uploadDate: 10
+      - sourceName: "PATCH:2"
+        patches:
+          - id: 2
+            fileName: stale.txt
+            uploadDate: 15
+      - sourceName: "PATCH:5"
+        patches:
+          - id: 5
+            fileName: latest.txt
+            uploadDate: 20
+  comments:
+    comments:
+      - permaId:
+          id: "CMT:1"
+        message: Please keep this file
+        deleted: false
+        reviewItemId:
+          id: CFR-1
+  review_items:
+    reviewItem:
+      - permId:
+          id: CFR-1
+        patchUrl: /cru/COMMON-99/downloadpatch/1/commented.txt
+      - permId:
+          id: CFR-2
+        patchUrl: /cru/COMMON-99/downloadpatch/2/stale.txt
+      - permId:
+          id: CFR-5
+        patchUrl: /cru/COMMON-99/downloadpatch/5/latest.txt
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"deleted": ['
+    - '"2"'
+    - '"id": "1"'
+    - '"reason": "has_comments"'
+    - '"5"'

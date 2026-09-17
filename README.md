@@ -23,6 +23,10 @@ crsu comments resolve COMMENT_ID
 crsu comments unresolve COMMENT_ID
 crsu comments defect COMMENT_ID
 crsu comments undefect COMMENT_ID
+crsu patches
+crsu patches list [REVIEW_ID]
+crsu patches delete PATCH_ID
+crsu patches prune
 ```
 
 - `doctor`：只读检查当前 Git 仓库。
@@ -33,8 +37,16 @@ crsu comments undefect COMMENT_ID
   创建 Crucible review。
 - `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。
 - `comments`：从 Crucible 拉取或修改评审评论，stdout 输出稳定 JSON。省略 review id 时从 HEAD 的 `Url:` 读取。`reply` 回复一条评论；`edit` / `update` 改写自己的评论；`delete` / `rm` 删除自己的评论；`unresolve` / `needs-resolve` 标成 Needs resolution；`resolve` / `mark-resolved` 标成 Resolved；`defect` / `raise-defect` 标成缺陷；`undefect` / `clear-defect` 取消缺陷。Crucible 只允许改/删自己的评论。
+- `patches`：列出或删除评审上的过往 patch（`-na` / `diff` 每次追加的全量）。`list` 只输出元数据；`delete` 删指定块；`prune` 只留最新。挂着未删行内评论的 patch 会跳过，不挡整次清理。`diff` 不会自动 prune。
 
 `diff` 已可创建/更新评审；`land` 已支持同分支合入。跨分支 merge 尚未实现。
+
+给 agent 的用法约束是一份通用 Agent Skill，见 [`skills/crsu/SKILL.md`](skills/crsu/SKILL.md)。需要时拷到所用 CLI 的 skills 目录即可，例如：
+
+```bash
+cp -R skills/crsu ~/.claude/skills/crsu
+cp -R skills/crsu ~/.cursor/skills/crsu
+```
 
 ## 开发
 

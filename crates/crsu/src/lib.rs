@@ -153,6 +153,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<CommentsCommand>,
     },
+    /// 列出或删除评审上的过往 patch。
+    Patches {
+        #[command(subcommand)]
+        command: Option<PatchesCommand>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -245,6 +250,29 @@ enum CommentsCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum PatchesCommand {
+    /// 以稳定 JSON 输出评审上的 patch。
+    List {
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        review_id: Option<String>,
+    },
+    /// 删除指定 patch；挂着未删行内评论的会跳过。
+    Delete {
+        /// patch id，例如 `37473` 或 `PATCH:37473`；可重复。
+        patch_ids: Vec<String>,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
+    /// 只留最新一块，其余能删的删掉。
+    Prune {
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ConfigCommand {
     /// 显示当前配置（认证 token 始终脱敏）。
     Show,
@@ -300,6 +328,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Completions { shell } => completions(shell),
         Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
         Command::Comments { command } => comments_command(command),
+        Command::Patches { command } => patches_command(command),
     }
 }
 
@@ -562,37 +591,62 @@ fn comments_command(command: Option<CommentsCommand>) -> ExitCode {
     }
 }
 
+fn patches_command(command: Option<PatchesCommand>) -> ExitCode {
+    match command.unwrap_or(PatchesCommand::List { review_id: None }) {
+        PatchesCommand::List { review_id } => {
+            review_json(review_id.as_deref(), crucible::review_patches, "patches")
+        }
+        PatchesCommand::Delete { patch_ids, review } => review_json(
+            review.as_deref(),
+            |review_id| crucible::delete_patches(review_id, &patch_ids),
+            "patches",
+        ),
+        PatchesCommand::Prune { review } => {
+            review_json(review.as_deref(), crucible::prune_patches, "patches")
+        }
+    }
+}
+
 /// Resolves the review id, runs one comment operation, and prints its JSON result.
 fn comments<T: serde::Serialize>(
     review_id: Option<&str>,
     operation: impl FnOnce(&str) -> Result<T, crucible::CrucibleError>,
 ) -> ExitCode {
-    let review_id = match review_id_or_head(review_id) {
+    review_json(review_id, operation, "comments")
+}
+
+fn review_json<T: serde::Serialize>(
+    review_id: Option<&str>,
+    operation: impl FnOnce(&str) -> Result<T, crucible::CrucibleError>,
+    what: &str,
+) -> ExitCode {
+    let review_id = match review_id_or_head(review_id, what) {
         Ok(review_id) => review_id,
         Err(code) => return code,
     };
     match operation(&review_id) {
-        Ok(result) => print_comments_json(&result),
-        Err(error) => comments_failed(error),
+        Ok(result) => {
+            let json = serde_json::to_string_pretty(&result).expect("review json serialize");
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => review_failed(what, error),
     }
 }
 
-fn review_id_or_head(review_id: Option<&str>) -> Result<String, ExitCode> {
+fn review_id_or_head(review_id: Option<&str>, what: &str) -> Result<String, ExitCode> {
     if let Some(review_id) = review_id {
         return Ok(review_id.to_owned());
     }
-    let repository = git_repository::Repository::discover().map_err(comments_failed)?;
-    repository.review_id_from_head().map_err(comments_failed)
+    let repository =
+        git_repository::Repository::discover().map_err(|error| review_failed(what, error))?;
+    repository
+        .review_id_from_head()
+        .map_err(|error| review_failed(what, error))
 }
 
-fn print_comments_json(value: &impl serde::Serialize) -> ExitCode {
-    let json = serde_json::to_string_pretty(value).expect("review comments serialize");
-    println!("{json}");
-    ExitCode::SUCCESS
-}
-
-fn comments_failed(error: impl std::fmt::Display) -> ExitCode {
-    eprintln!("comments failed: {error}");
+fn review_failed(what: &str, error: impl std::fmt::Display) -> ExitCode {
+    eprintln!("{what} failed: {error}");
     ExitCode::FAILURE
 }
 

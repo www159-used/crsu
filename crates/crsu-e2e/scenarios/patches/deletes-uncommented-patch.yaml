@@ -1,0 +1,33 @@
+name: patches delete removes a patch without line comments
+command: [patches, delete, "PATCH:1", --review, COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  expected_deletes:
+    - "1"
+  patches:
+    patchGroup:
+      - sourceName: "PATCH:1"
+        patches:
+          - id: 1
+            fileName: old.txt
+            uploadDate: 10
+      - sourceName: "PATCH:5"
+        patches:
+          - id: 5
+            fileName: new.txt
+            uploadDate: 20
+  comments:
+    comments: []
+  review_items:
+    reviewItem: []
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"deleted": ['
+    - '"1"'
+    - '"kept": ['
+    - '"5"'
+    - '"skipped": []'

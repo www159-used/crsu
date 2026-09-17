@@ -127,6 +127,17 @@ pub struct CommentsDefectExpectation {
     pub defect: bool,
 }
 
+/// One patches conversation: list groups and optionally delete some.
+#[derive(Clone, Debug)]
+pub struct PatchesFixture {
+    pub token: String,
+    pub review_id: String,
+    pub patches: serde_json::Value,
+    pub comments: serde_json::Value,
+    pub review_items: serde_json::Value,
+    pub expected_deletes: Vec<String>,
+}
+
 /// Result returned by Crucible when crsu creates a review.
 #[derive(Clone, Debug)]
 pub enum ReviewResponse {
@@ -176,6 +187,7 @@ enum Script {
     Review(Box<ReviewFixture>),
     Land(Box<LandFixture>),
     Comments(Box<CommentsFixture>),
+    Patches(Box<PatchesFixture>),
 }
 
 #[derive(Clone, Debug)]
@@ -222,6 +234,12 @@ impl MockCrucible {
     #[must_use]
     pub fn start_comments(fixture: &CommentsFixture) -> Self {
         Self::spawn(Script::Comments(Box::new(fixture.clone())), None)
+    }
+
+    /// Starts a Crucible adapter that serves patches, comments, and review items.
+    #[must_use]
+    pub fn start_patches(fixture: &PatchesFixture) -> Self {
+        Self::spawn(Script::Patches(Box::new(fixture.clone())), None)
     }
 
     fn spawn(script: Script, review: Option<ReviewSnapshot>) -> Self {
@@ -310,6 +328,7 @@ impl MockCrucible {
                 &[],
             ),
             Script::Comments(fixture) => assert_comments_script(fixture, &interactions),
+            Script::Patches(fixture) => assert_patches_script(fixture, &interactions),
         }
     }
 }
@@ -471,6 +490,7 @@ fn handle_request(mut request: tiny_http::Request, shared: &Shared) -> Result<()
         Script::Review(fixture) => handle_review(fixture, &shared.review, &method, &path, &body)?,
         Script::Land(fixture) => handle_land(fixture, &method, &path),
         Script::Comments(fixture) => handle_comments(fixture, &method, &path),
+        Script::Patches(fixture) => handle_patches(fixture, &method, &path),
     };
 
     let mut response = Response::from_string(response_body).with_status_code(StatusCode(status));
@@ -724,6 +744,55 @@ fn handle_comments(fixture: &CommentsFixture, method: &str, path: &str) -> (u16,
             })
             .to_string(),
         );
+    }
+    (404, format!("unhandled {method} {path}"))
+}
+
+fn assert_patches_script(fixture: &PatchesFixture, interactions: &[Interaction]) {
+    assert_recorded(
+        interactions,
+        "GET",
+        &format!("/rest-service/reviews-v1/{}/patch", fixture.review_id),
+        &[],
+    );
+    assert_recorded(
+        interactions,
+        "GET",
+        &format!("/rest-service/reviews-v1/{}/comments", fixture.review_id),
+        &[],
+    );
+    assert_recorded(
+        interactions,
+        "GET",
+        &format!("/rest-service/reviews-v1/{}/reviewitems", fixture.review_id),
+        &[],
+    );
+    for patch_id in &fixture.expected_deletes {
+        assert_recorded(
+            interactions,
+            "DELETE",
+            &format!(
+                "/rest-service/reviews-v1/{}/patch/{patch_id}",
+                fixture.review_id
+            ),
+            &[],
+        );
+    }
+}
+
+fn handle_patches(fixture: &PatchesFixture, method: &str, path: &str) -> (u16, String) {
+    let prefix = format!("/rest-service/reviews-v1/{}", fixture.review_id);
+    if method == "GET" && path == format!("{prefix}/patch") {
+        return (200, fixture.patches.to_string());
+    }
+    if method == "GET" && path == format!("{prefix}/comments") {
+        return (200, fixture.comments.to_string());
+    }
+    if method == "GET" && path == format!("{prefix}/reviewitems") {
+        return (200, fixture.review_items.to_string());
+    }
+    if method == "DELETE" && path.starts_with(&format!("{prefix}/patch/")) {
+        return (200, serde_json::json!({"patchGroup": []}).to_string());
     }
     (404, format!("unhandled {method} {path}"))
 }
