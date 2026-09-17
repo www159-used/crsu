@@ -1,11 +1,14 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
-use super::common::{assert_contains_all, crsu_binary, load_yaml, run_git, text, write_files};
+use super::common::{
+    CrucibleEnv, Expectation, assert_contains_all, assert_no_token_leak, assert_scenario,
+    create_origin, init_repository, load_yaml, run_crsu, run_git, write_files,
+};
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use tempfile::TempDir;
 
 pub fn run(path: &Path) {
@@ -16,24 +19,7 @@ fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
     let output = run_with_optional_crucible(&repository, scenario);
 
-    assert_eq!(
-        output.status.success(),
-        scenario.expect.success,
-        "scenario failed: {}\nstdout: {}\nstderr: {}",
-        scenario.name,
-        text(&output.stdout),
-        text(&output.stderr),
-    );
-    assert_contains_all(
-        &scenario.name,
-        &text(&output.stdout),
-        &scenario.expect.stdout_contains,
-    );
-    assert_contains_all(
-        &scenario.name,
-        &text(&output.stderr),
-        &scenario.expect.stderr_contains,
-    );
+    assert_scenario(&scenario.name, &output, &scenario.expect);
     let subject = repository.git_output(["show", "-s", "--format=%s", "HEAD"]);
     if let Some(expected) = &scenario.expect.head_subject {
         assert_eq!(
@@ -45,18 +31,13 @@ fn run_scenario(scenario: &Scenario) {
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
     assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
     if let Some(crucible) = &scenario.crucible {
-        let output = format!("{}{}", text(&output.stdout), text(&output.stderr));
-        assert!(
-            !output.contains(&crucible.token),
-            "scenario '{}' leaked the Crucible token in command output",
-            scenario.name
-        );
+        assert_no_token_leak(&scenario.name, &output, &crucible.token);
     }
 }
 
 fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenario) -> Output {
     let Some(crucible) = &scenario.crucible else {
-        return repository.run_crsu(&scenario.command, None);
+        return run_crsu(Some(&repository.working_directory), &scenario.command, None);
     };
 
     let server = MockCrucible::start_review(ReviewFixture {
@@ -87,7 +68,18 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
         ),
     });
 
-    let output = repository.run_crsu(&scenario.command, Some((&server, crucible)));
+    let env = CrucibleEnv {
+        url: server.base_url(),
+        project: &crucible.project,
+        token: &crucible.token,
+        reviewers: &crucible.reviewers,
+        repository: crucible.repository.as_deref(),
+    };
+    let output = run_crsu(
+        Some(&repository.working_directory),
+        &scenario.command,
+        Some(&env),
+    );
     server.assert_review_request();
     if let Some(expected) = &scenario.expect.review {
         let actual = server.review();
@@ -119,43 +111,17 @@ struct ScenarioRepository {
 
 impl ScenarioRepository {
     fn create(specification: &Repository) -> Self {
-        let repository = TempDir::new().expect("create temporary Git repository");
-        run_git(
-            repository.path(),
-            ["init", "-b", &specification.base_branch],
+        let repository = init_repository(
+            &specification.base_branch,
+            &specification.base_files,
+            "base",
         );
-        run_git(repository.path(), ["config", "user.name", "Test User"]);
-        run_git(
-            repository.path(),
-            ["config", "user.email", "test@example.com"],
-        );
-        write_files(repository.path(), &specification.base_files);
-        run_git(repository.path(), ["add", "."]);
-        run_git(repository.path(), ["commit", "-m", "base"]);
 
         let origin = specification.origin.as_ref().map(|origin| {
-            let remote = TempDir::new().expect("create origin repository");
-            run_git(remote.path(), ["init", "--bare"]);
-            run_git(
+            let remote = create_origin(
                 repository.path(),
-                [
-                    "remote",
-                    "add",
-                    "origin",
-                    remote.path().to_str().expect("origin path is UTF-8"),
-                ],
-            );
-            run_git(
-                repository.path(),
-                ["push", "-u", "origin", &specification.base_branch],
-            );
-            run_git(
-                remote.path(),
-                [
-                    "symbolic-ref",
-                    "HEAD",
-                    &format!("refs/heads/{}", origin.default_branch),
-                ],
+                &specification.base_branch,
+                &origin.default_branch,
             );
             run_git(
                 repository.path(),
@@ -203,28 +169,6 @@ impl ScenarioRepository {
             _origin: origin,
             working_directory,
         }
-    }
-
-    fn run_crsu(
-        &self,
-        arguments: &[String],
-        crucible: Option<(&MockCrucible, &Crucible)>,
-    ) -> Output {
-        let mut command = Command::new(crsu_binary());
-        command.args(arguments).current_dir(&self.working_directory);
-        if let Some((server, crucible)) = crucible {
-            command
-                .env("CRSU_CRUCIBLE_URL", server.base_url())
-                .env("CRSU_CRUCIBLE_PROJECT", &crucible.project)
-                .env("CRSU_CRUCIBLE_TOKEN", &crucible.token)
-                .env("CRSU_CRUCIBLE_REVIEWERS", crucible.reviewers.join(","));
-            if let Some(repository) = &crucible.repository {
-                command.env("CRSU_CRUCIBLE_REPOSITORY", repository);
-            } else {
-                command.env_remove("CRSU_CRUCIBLE_REPOSITORY");
-            }
-        }
-        command.output().expect("run crsu")
     }
 
     fn git_output<const N: usize>(&self, arguments: [&str; N]) -> String {
@@ -278,24 +222,4 @@ struct Repository {
 #[derive(Deserialize)]
 struct Origin {
     default_branch: String,
-}
-
-#[derive(Deserialize)]
-struct Expectation {
-    success: bool,
-    #[serde(default)]
-    stdout_contains: Vec<String>,
-    #[serde(default)]
-    stderr_contains: Vec<String>,
-    head_subject: Option<String>,
-    #[serde(default)]
-    head_body_contains: Vec<String>,
-    review: Option<ExpectedReview>,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-struct ExpectedReview {
-    title: String,
-    objectives: String,
-    state: String,
 }

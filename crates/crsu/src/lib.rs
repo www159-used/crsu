@@ -148,6 +148,100 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// 读取或修改评审评论。
+    Comments {
+        #[command(subcommand)]
+        command: Option<CommentsCommand>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CommentsCommand {
+    /// 以稳定 JSON 输出评审评论。
+    List {
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        review_id: Option<String>,
+    },
+    /// 回复一条评论。
+    Reply {
+        /// 评论 id，例如 `CMT:39844`。
+        comment_id: String,
+        /// 回复正文。
+        #[arg(short, long)]
+        message: String,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
+    /// 将评论标为已解决。
+    #[command(visible_alias = "mark-resolved")]
+    Resolve {
+        /// 评论 id；可重复。与 `--all` 一起时忽略。
+        comment_ids: Vec<String>,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+        /// 该 review 下全部顶层评论。
+        #[arg(long)]
+        all: bool,
+    },
+    /// 删除一条自己的评论或回复。
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// 评论 id，例如 `CMT:39844`。
+        comment_id: String,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
+    /// 改写一条自己的评论或回复。
+    #[command(visible_alias = "update")]
+    Edit {
+        /// 评论 id，例如 `CMT:39844`。
+        comment_id: String,
+        /// 新的评论正文。
+        #[arg(short, long)]
+        message: String,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
+    /// 将评论标为缺陷。
+    #[command(visible_alias = "raise-defect")]
+    Defect {
+        /// 评论 id；可重复。与 `--all` 一起时忽略。
+        comment_ids: Vec<String>,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+        /// 该 review 下全部顶层评论。
+        #[arg(long)]
+        all: bool,
+    },
+    /// 取消评论上的缺陷标记。
+    #[command(visible_alias = "clear-defect")]
+    Undefect {
+        /// 评论 id；可重复。与 `--all` 一起时忽略。
+        comment_ids: Vec<String>,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+        /// 该 review 下全部顶层评论。
+        #[arg(long)]
+        all: bool,
+    },
+    /// 将评论标为待解决（Needs resolution）。
+    #[command(visible_alias = "needs-resolve")]
+    Unresolve {
+        /// 评论 id；可重复。与 `--all` 一起时忽略。
+        comment_ids: Vec<String>,
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+        /// 该 review 下全部顶层评论。
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -205,6 +299,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Copy { base } => copy(base.as_deref()),
         Command::Completions { shell } => completions(shell),
         Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
+        Command::Comments { command } => comments_command(command),
     }
 }
 
@@ -402,6 +497,105 @@ fn completions(shell: clap_complete::Shell) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn comments_command(command: Option<CommentsCommand>) -> ExitCode {
+    match command.unwrap_or(CommentsCommand::List { review_id: None }) {
+        CommentsCommand::List { review_id } => {
+            comments(review_id.as_deref(), crucible::review_comments)
+        }
+        CommentsCommand::Reply {
+            comment_id,
+            message,
+            review,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::reply_comment(review_id, &comment_id, &message)
+        }),
+        CommentsCommand::Resolve {
+            comment_ids,
+            review,
+            all,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::set_comment_resolutions(
+                review_id,
+                &comment_ids,
+                crucible::ResolutionStatus::Resolved,
+                all,
+            )
+        }),
+        CommentsCommand::Unresolve {
+            comment_ids,
+            review,
+            all,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::set_comment_resolutions(
+                review_id,
+                &comment_ids,
+                crucible::ResolutionStatus::Unresolved,
+                all,
+            )
+        }),
+        CommentsCommand::Delete { comment_id, review } => {
+            comments(review.as_deref(), |review_id| {
+                crucible::delete_comment(review_id, &comment_id)
+            })
+        }
+        CommentsCommand::Edit {
+            comment_id,
+            message,
+            review,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::edit_comment(review_id, &comment_id, &message)
+        }),
+        CommentsCommand::Defect {
+            comment_ids,
+            review,
+            all,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::set_comment_defects(review_id, &comment_ids, true, all)
+        }),
+        CommentsCommand::Undefect {
+            comment_ids,
+            review,
+            all,
+        } => comments(review.as_deref(), |review_id| {
+            crucible::set_comment_defects(review_id, &comment_ids, false, all)
+        }),
+    }
+}
+
+/// Resolves the review id, runs one comment operation, and prints its JSON result.
+fn comments<T: serde::Serialize>(
+    review_id: Option<&str>,
+    operation: impl FnOnce(&str) -> Result<T, crucible::CrucibleError>,
+) -> ExitCode {
+    let review_id = match review_id_or_head(review_id) {
+        Ok(review_id) => review_id,
+        Err(code) => return code,
+    };
+    match operation(&review_id) {
+        Ok(result) => print_comments_json(&result),
+        Err(error) => comments_failed(error),
+    }
+}
+
+fn review_id_or_head(review_id: Option<&str>) -> Result<String, ExitCode> {
+    if let Some(review_id) = review_id {
+        return Ok(review_id.to_owned());
+    }
+    let repository = git_repository::Repository::discover().map_err(comments_failed)?;
+    repository.review_id_from_head().map_err(comments_failed)
+}
+
+fn print_comments_json(value: &impl serde::Serialize) -> ExitCode {
+    let json = serde_json::to_string_pretty(value).expect("review comments serialize");
+    println!("{json}");
+    ExitCode::SUCCESS
+}
+
+fn comments_failed(error: impl std::fmt::Display) -> ExitCode {
+    eprintln!("comments failed: {error}");
+    ExitCode::FAILURE
+}
+
 fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
@@ -425,7 +619,11 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         Ok(upstream) => upstream,
         Err(error) => return land_failed(error),
     };
-    let acceptance = match land_acceptance(&repository, &upstream) {
+    let config = match crucible::configured() {
+        Ok(config) => config,
+        Err(error) => return land_failed(error),
+    };
+    let acceptance = match land_acceptance(&repository, &upstream, &config) {
         Ok(acceptance) => acceptance,
         Err(code) => return code,
     };
@@ -449,9 +647,7 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
     ) {
         return land_failed(error);
     }
-    let remote_branch = upstream
-        .strip_prefix("origin/")
-        .unwrap_or(upstream.as_str());
+    let remote_branch = git_repository::land_ref_key(&upstream);
     println!("Rebasing onto {upstream}");
     if let Err(error) = repository.pull_rebase_origin(remote_branch) {
         return land_failed(error);
@@ -469,7 +665,7 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         return land_failed(error);
     }
     println!("Pushed: {current} -> {upstream}");
-    if let Err(error) = crucible::close_review(&acceptance.review_id) {
+    if let Err(error) = crucible::close_review(&config, &acceptance.review_id, &acceptance.state) {
         eprintln!("land failed: review was pushed, but closing failed: {error}");
         return ExitCode::FAILURE;
     }
@@ -499,6 +695,7 @@ fn print_land_plan(
 fn land_acceptance(
     repository: &git_repository::Repository,
     upstream: &str,
+    config: &crucible::Config,
 ) -> Result<crucible::LandReview, ExitCode> {
     let commits = repository.commits_ahead_of(upstream).map_err(land_failed)?;
     match commits.as_slice() {
@@ -516,7 +713,7 @@ fn land_acceptance(
     let Some(review_id) = git_repository::review_id_from_message(&first_message) else {
         return Err(land_failed(git_repository::Error::NoReviewUrl));
     };
-    crucible::land_review(&review_id).map_err(land_failed)
+    crucible::land_review(config, &review_id).map_err(land_failed)
 }
 
 fn land_failed(error: impl std::fmt::Display) -> ExitCode {
@@ -545,10 +742,7 @@ fn attach_review(repository: &git_repository::Repository, review_id: &str) -> Ex
             return ExitCode::FAILURE;
         }
     };
-    let review_url = format!(
-        "{}/cru/{review_id}",
-        config.crucible.url.trim_end_matches('/')
-    );
+    let review_url = crucible::review_url(&config.crucible.url, review_id);
     match repository.attach_review(&review_url, &config.crucible.reviewers) {
         Ok(()) => {
             println!("Attached: {review_id}");

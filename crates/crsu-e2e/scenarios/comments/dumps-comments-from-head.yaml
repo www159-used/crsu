@@ -1,0 +1,30 @@
+name: comments reads the review id from HEAD when none is given
+repository:
+  files:
+    README.md: "feature\n"
+  message: |-
+    fix: land me
+
+    Url: http://crucible/cru/COMMON-99
+command: [comments]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments:
+      - permaId:
+          id: "CMT:1"
+        message: Please add a test
+        user:
+          userName: alice
+        createDate: "2024-01-02T03:04:05.000+0000"
+  review_items:
+    reviewItem: []
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"message": "Please add a test"'
+    - '"kind": "general"'
+    - '"author": "alice"'

@@ -738,6 +738,7 @@ dependencies = [
  "crsu-testkit",
  "libtest-mimic",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tempfile",
 ]
@@ -746,7 +747,6 @@ dependencies = [
 name = "crsu-testkit"
 version = "0.1.0"
 dependencies = [
- "httpmock",
  "serde",
  "serde_json",
  "serde_urlencoded",

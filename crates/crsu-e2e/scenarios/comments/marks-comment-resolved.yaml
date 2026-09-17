@@ -1,0 +1,27 @@
+name: comments marks a general comment as resolved
+command: [comments, resolve, "CMT:1", "--review", COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments:
+      - permaId:
+          id: "CMT:1"
+        message: Looks good
+        user:
+          userName: alice
+  review_items:
+    reviewItem: []
+  resolution:
+    endpoint: generalCommentResolutionAjax
+    comment_id: "1"
+    status: RESOLVED
+    form_contains:
+      - [type, general]
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"comment_id": "CMT:1"'
+    - '"status": "resolved"'

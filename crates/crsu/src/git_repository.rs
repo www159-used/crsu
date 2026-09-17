@@ -122,15 +122,10 @@ impl Repository {
     }
 
     pub fn upstream_of(&self, branch: &str) -> Result<String, Error> {
-        self.output([
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            &format!("{branch}@{{upstream}}"),
-        ])
-        .map_err(|_| Error::NoUpstream {
-            branch: branch.to_owned(),
-        })
+        self.upstream_ref(&format!("{branch}@{{upstream}}"))
+            .map_err(|_| Error::NoUpstream {
+                branch: branch.to_owned(),
+            })
     }
 
     /// Commit hashes reachable from HEAD but not `base`, oldest first.
@@ -144,6 +139,12 @@ impl Repository {
 
     pub fn commit_message(&self, commit: &str) -> Result<String, Error> {
         self.output(["show", "-s", "--format=%B", commit])
+    }
+
+    /// Reads the Crucible review id from the HEAD commit message.
+    pub fn review_id_from_head(&self) -> Result<String, Error> {
+        let message = self.commit_message("HEAD")?;
+        review_id_from_message(&message).ok_or(Error::NoReviewUrl)
     }
 
     /// Amends HEAD with land metadata. The caller must already have exactly one commit to land.
@@ -250,12 +251,7 @@ impl Repository {
     }
 
     fn default_base(&self) -> Result<String, Error> {
-        if let Ok(upstream) = self.output([
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{upstream}",
-        ]) {
+        if let Ok(upstream) = self.upstream_ref("@{upstream}") {
             return Ok(upstream);
         }
 
@@ -267,6 +263,16 @@ impl Repository {
         }
 
         Err(Error::NoDefaultBase)
+    }
+
+    /// Resolves a rev-parse upstream specifier such as `main@{upstream}` to a full ref name.
+    fn upstream_ref(&self, specifier: &str) -> Result<String, Error> {
+        self.output([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            specifier,
+        ])
     }
 
     fn output<const N: usize>(&self, arguments: [&str; N]) -> Result<String, Error> {
@@ -410,7 +416,7 @@ pub(crate) fn target_from_objectives(objectives: &str) -> Option<&str> {
     })
 }
 
-fn land_ref_key(name: &str) -> &str {
+pub(crate) fn land_ref_key(name: &str) -> &str {
     let name = name.trim().trim_end_matches('/');
     name.strip_prefix("refs/remotes/origin/")
         .or_else(|| name.strip_prefix("refs/remotes/"))

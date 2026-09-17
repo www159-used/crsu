@@ -1,5 +1,7 @@
 //! Registers every YAML file as an independently reported test.
 
+#[path = "support/comments.rs"]
+mod comments;
 #[path = "support/common.rs"]
 mod common;
 #[path = "support/diff.rs"]
@@ -43,6 +45,7 @@ fn main() {
 
 fn run(category: &str, path: &Path) {
     match category {
+        "comments" => comments::run(path),
         "diff" => diff::run(path),
         "init" => init::run(path),
         "land" => land::run(path),

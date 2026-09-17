@@ -1,0 +1,21 @@
+name: comments replies to a line comment
+command: [comments, reply, "CMT:2", "-m", "will extract", "--review", COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments: []
+  review_items:
+    reviewItem: []
+  reply:
+    comment_id: "CMT:2"
+    message: will extract
+    reply_id: "CMT:4"
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"comment_id": "CMT:2"'
+    - '"reply_id": "CMT:4"'
+    - '"message": "will extract"'

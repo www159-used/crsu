@@ -1,0 +1,55 @@
+name: comments dumps line and general comments for an explicit review id
+command: [comments, list, COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments:
+      - permaId:
+          id: "CMT:1"
+        message: Looks good
+        draft: false
+        deleted: false
+        defectRaised: false
+        user:
+          userName: alice
+        createDate: "2024-01-02T03:04:05.000+0000"
+      - permaId:
+          id: "CMT:2"
+        message: Extract this helper
+        draft: false
+        deleted: false
+        defectRaised: true
+        user:
+          userName: bob
+        createDate: 1700000000000
+        reviewItemId:
+          id: CFR-1
+        lineRanges:
+          - range: "12-14"
+        replies:
+          comments:
+            - permaId:
+                id: "CMT:3"
+              message: Done
+              user:
+                userName: alice
+              createDate: "2024-01-03T00:00:00.000+0000"
+  review_items:
+    reviewItem:
+      - permId:
+          id: CFR-1
+        toPath: src/lib.rs
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"kind": "general"'
+    - '"kind": "line"'
+    - '"path": "src/lib.rs"'
+    - '"line": "12-14"'
+    - '"message": "Extract this helper"'
+    - '"message": "Done"'
+    - '"defect": true'
+    - '"author": "bob"'

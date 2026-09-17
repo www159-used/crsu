@@ -1,0 +1,24 @@
+name: comments rewrites a top-level comment
+command: [comments, edit, "CMT:2", "-m", "please extract the helper", "--review", COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments:
+      - permaId:
+          id: "CMT:2"
+        message: Extract this helper
+        user:
+          userName: bob
+  review_items:
+    reviewItem: []
+  edit:
+    comment_id: "CMT:2"
+    message: please extract the helper
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"comment_id": "CMT:2"'
+    - '"message": "please extract the helper"'
