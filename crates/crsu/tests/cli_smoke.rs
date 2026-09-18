@@ -219,6 +219,70 @@ fn doctor_reports_the_current_git_repository() {
 }
 
 #[test]
+fn diff_help_lists_force_for_oversized_patches() {
+    let output = crsu()
+        .args(["diff", "--help"])
+        .output()
+        .expect("run crsu diff --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
+    assert!(stdout.contains("--force"));
+}
+
+#[test]
+fn diff_refuses_patches_over_one_thousand_lines() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    git(repository.path(), &["init", "-b", "main", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "t@example.com"],
+    );
+    std::fs::write(repository.path().join("README"), "base\n").expect("write");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "base", "-q"]);
+    git(repository.path(), &["checkout", "-q", "-b", "feature"]);
+    let mut changed = String::new();
+    for index in 0..1001 {
+        changed.push_str("line ");
+        changed.push_str(&index.to_string());
+        changed.push('\n');
+    }
+    std::fs::write(repository.path().join("wide.txt"), changed).expect("write wide file");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "too wide", "-q"]);
+    let xdg = tempfile::tempdir().expect("isolate XDG_CONFIG_HOME");
+
+    let refused = crsu()
+        .args(["diff", "--yes", "main"])
+        .current_dir(repository.path())
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .output()
+        .expect("run crsu diff");
+    assert!(!refused.status.success());
+    let stdout = String::from_utf8(refused.stdout).expect("UTF-8 stdout");
+    let stderr = String::from_utf8(refused.stderr).expect("UTF-8 stderr");
+    assert!(stdout.contains("Files: 1"));
+    assert!(stdout.contains("Lines: 1001"));
+    assert!(stderr.contains("limited to 1000"));
+
+    let forced = crsu()
+        .args(["diff", "--yes", "--force", "main"])
+        .current_dir(repository.path())
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .output()
+        .expect("run crsu diff --force");
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    let warning = String::from_utf8(forced.stderr).expect("UTF-8 warning");
+    assert!(warning.contains("continuing because --force"));
+}
+
+#[test]
 fn land_rejects_cross_branch_targets() {
     let repository = tempfile::tempdir().expect("temporary repository");
     git(repository.path(), &["init", "-b", "main", "-q"]);

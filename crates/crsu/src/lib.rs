@@ -136,6 +136,9 @@ enum Command {
         /// 跳过提交 patch 前的确认提示。
         #[arg(short = 'y', long = "yes")]
         yes: bool,
+        /// 允许提交超过 1000 行的 patch。
+        #[arg(long)]
+        force: bool,
     },
     /// 输出评审摘要：`[base] title url`。默认复制当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支。
     Copy {
@@ -340,7 +343,12 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Config { command } => config(command),
         Command::Doctor => doctor(),
         Command::Status { review_ids } => status(&review_ids),
-        Command::Diff { base, attach, yes } => diff(base.as_deref(), attach.as_deref(), yes),
+        Command::Diff {
+            base,
+            attach,
+            yes,
+            force,
+        } => diff(base.as_deref(), attach.as_deref(), yes, force),
         Command::Copy {
             base,
             jira,
@@ -430,7 +438,7 @@ fn config(command: ConfigCommand) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
+fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> ExitCode {
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -443,9 +451,9 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
     }
     match repository.review_diff(base) {
         Ok(review_diff) => {
-            println!("Base: {}", review_diff.base());
-            println!("Commits: {}", review_diff.commit_count());
-            println!("Patch bytes: {}", review_diff.patch_len());
+            if let Err(code) = print_diff_plan(&review_diff, force) {
+                return code;
+            }
             if let Err(error) = hooks::run_pre(
                 &repository,
                 "pre-diff",
@@ -525,6 +533,25 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool) -> ExitCode {
             eprintln!("diff failed: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn print_diff_plan(review_diff: &git_repository::ReviewDiff, force: bool) -> Result<(), ExitCode> {
+    println!("Base: {}", review_diff.base());
+    println!("Commits: {}", review_diff.commit_count());
+    let stats = review_diff.stats();
+    println!("Files: {}", stats.files);
+    println!("Lines: {}", stats.lines);
+    match git_repository::patch_line_limit(stats.lines) {
+        Some(error) if force => {
+            eprintln!("warning: {error}; continuing because --force");
+            Ok(())
+        }
+        Some(error) => {
+            eprintln!("diff failed: {error}");
+            Err(ExitCode::FAILURE)
+        }
+        None => Ok(()),
     }
 }
 

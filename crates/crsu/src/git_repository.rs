@@ -17,6 +17,43 @@ pub struct ReviewShare {
     pub url: String,
 }
 
+/// Changed files and +/- lines in a review patch. Reviews stop at this many lines.
+pub const MAX_REVIEW_LINES: usize = 1000;
+
+/// File and line counts taken from the patch that would be uploaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatchStats {
+    pub files: usize,
+    pub lines: usize,
+}
+
+/// Counts `diff --git` files and added/removed lines, ignoring `---` / `+++` headers.
+#[must_use]
+pub fn patch_stats(patch: &str) -> PatchStats {
+    let mut files = 0;
+    let mut lines = 0;
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            files += 1;
+        } else if is_changed_line(line) {
+            lines += 1;
+        }
+    }
+    PatchStats { files, lines }
+}
+
+fn is_changed_line(line: &str) -> bool {
+    matches!(line.as_bytes().first(), Some(b'+' | b'-'))
+        && !line.starts_with("+++")
+        && !line.starts_with("---")
+}
+
+/// Returns why this patch must not be submitted, if it is over the line limit.
+#[must_use]
+pub fn patch_line_limit(lines: usize) -> Option<Error> {
+    (lines > MAX_REVIEW_LINES).then_some(Error::PatchTooLarge { lines })
+}
+
 /// 可提交给代码评审系统的 Git 差异。
 pub struct ReviewDiff {
     base: String,
@@ -470,8 +507,8 @@ impl ReviewDiff {
     }
 
     #[must_use]
-    pub fn patch_len(&self) -> usize {
-        self.patch.len()
+    pub fn stats(&self) -> PatchStats {
+        patch_stats(&self.patch)
     }
 
     #[must_use]
@@ -640,6 +677,7 @@ pub enum Error {
     CrossBranchLand { current: String, target: String },
     NoChanges { base: String },
     PublishedCommit { remote_refs: String },
+    PatchTooLarge { lines: usize },
 }
 
 impl fmt::Display for Error {
@@ -682,6 +720,10 @@ impl fmt::Display for Error {
                 "cross-branch land from {current} to {target} is not implemented; checkout {target} or omit the target"
             ),
             Self::NoChanges { base } => write!(formatter, "no changes relative to {base}"),
+            Self::PatchTooLarge { lines } => write!(
+                formatter,
+                "patch has {lines} changed lines; reviews are limited to {MAX_REVIEW_LINES}; use --force to submit anyway"
+            ),
             Self::PublishedCommit { remote_refs } => write!(
                 formatter,
                 "refusing to amend HEAD because it is already on remote branch(es): {}",
@@ -694,8 +736,9 @@ impl fmt::Display for Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        land_ref_key, managed_commit_message, review_id_from_message, review_url_from_message,
-        share_from_message, target_from_objectives,
+        MAX_REVIEW_LINES, land_ref_key, managed_commit_message, patch_line_limit, patch_stats,
+        review_id_from_message, review_url_from_message, share_from_message,
+        target_from_objectives,
     };
 
     #[test]
@@ -771,5 +814,36 @@ Url: http://crucible/cru/LP-1476
         assert_eq!(land_ref_key("origin/feature"), "feature");
         assert_eq!(land_ref_key("refs/heads/feature"), "feature");
         assert_eq!(land_ref_key("feature"), "feature");
+    }
+
+    #[test]
+    fn counts_files_and_changed_lines_not_headers() {
+        let patch = "\
+diff --git a/README.md b/README.md
+index 111..222 100644
+--- a/README.md
++++ b/README.md
+@@ -1,2 +1,2 @@
+ context
+-old
++new
+diff --git a/src/lib.rs b/src/lib.rs
+new file mode 100644
+--- /dev/null
++++ b/src/lib.rs
+@@ -0,0 +1,2 @@
++one
++two
+";
+        let stats = patch_stats(patch);
+        assert_eq!(stats.files, 2);
+        assert_eq!(stats.lines, 4);
+    }
+
+    #[test]
+    fn allows_exactly_the_line_limit() {
+        assert_eq!(MAX_REVIEW_LINES, 1000);
+        assert!(patch_line_limit(MAX_REVIEW_LINES).is_none());
+        assert!(patch_line_limit(MAX_REVIEW_LINES + 1).is_some());
     }
 }

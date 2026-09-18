@@ -32,7 +32,7 @@ description: >-
 
 ## 出评审
 
-工作区干净。基线写合入目标，例如 `origin/master`，不要写当前 feature 自己的 upstream。非交互加 `-y`。
+工作区干净。基线写合入目标，例如 `origin/master`，不要写当前 feature 自己的 upstream。非交互加 `-y`。超过 1000 行变更会拒绝，拆小或确认后加 `--force`。
 
 HEAD 里的 `Url:` 指向未关闭的评审时追加 patch；评审已关闭或已放弃则新建，并改写 `Url:`。
 
