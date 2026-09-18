@@ -100,7 +100,11 @@ pub mod init_test_support {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "crsu", about = "Focused Git and Crucible review workflow")]
+#[command(
+    name = "crsu",
+    version,
+    about = "Focused Git and Crucible review workflow"
+)]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,
