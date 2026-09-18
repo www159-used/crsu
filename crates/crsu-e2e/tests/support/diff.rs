@@ -1,9 +1,9 @@
 //! Executes the declarative scenarios in `e2e/diff/*.yaml`.
 
 use super::common::{
-    CrucibleEnv, Expectation, assert_contains_all, assert_no_token_leak, assert_scenario,
-    assert_stdout_json, captured_hook_json, create_origin, init_repository, install_crsu_hooks,
-    load_yaml, run_crsu, run_git, write_files,
+    CrucibleEnv, Expectation, assert_contains_all, assert_hooks, assert_no_token_leak,
+    assert_scenario, create_origin, init_repository, install_crsu_hooks, install_global_hooks,
+    load_yaml, run_crsu_with_xdg, run_git, write_files,
 };
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
@@ -19,7 +19,9 @@ pub fn run(path: &Path) {
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
     install_crsu_hooks(&repository.working_directory, &scenario.hooks);
-    let output = run_with_optional_crucible(&repository, scenario);
+    let xdg = TempDir::new().expect("isolate XDG_CONFIG_HOME");
+    install_global_hooks(xdg.path(), &scenario.global_hooks);
+    let output = run_with_optional_crucible(&repository, scenario, xdg.path());
 
     assert_scenario(&scenario.name, &output, &scenario.expect);
     let subject = repository.git_output(["show", "-s", "--format=%s", "HEAD"]);
@@ -37,9 +39,25 @@ fn run_scenario(scenario: &Scenario) {
     }
 }
 
-fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenario) -> Output {
+fn run_with_optional_crucible(
+    repository: &ScenarioRepository,
+    scenario: &Scenario,
+    xdg_config_home: &Path,
+) -> Output {
     let Some(crucible) = &scenario.crucible else {
-        return run_crsu(Some(&repository.working_directory), &scenario.command, None);
+        let output = run_crsu_with_xdg(
+            Some(&repository.working_directory),
+            &scenario.command,
+            None,
+            xdg_config_home,
+        );
+        assert_hooks(
+            &scenario.name,
+            &repository.working_directory,
+            &scenario.expect,
+            None,
+        );
+        return output;
     };
 
     let server = MockCrucible::start_review(ReviewFixture {
@@ -87,20 +105,19 @@ fn run_with_optional_crucible(repository: &ScenarioRepository, scenario: &Scenar
         reviewers: &crucible.reviewers,
         repository: crucible.repository.as_deref(),
     };
-    let output = run_crsu(
+    let output = run_crsu_with_xdg(
         Some(&repository.working_directory),
         &scenario.command,
         Some(&env),
+        xdg_config_home,
     );
     server.assert_review_request();
-    if let Some(expected) = &scenario.expect.hook_json {
-        assert_stdout_json(
-            &scenario.name,
-            &captured_hook_json(&repository.working_directory),
-            expected,
-            Some((server.base_url().as_str(), "http://crucible")),
-        );
-    }
+    assert_hooks(
+        &scenario.name,
+        &repository.working_directory,
+        &scenario.expect,
+        Some((server.base_url().as_str(), "http://crucible")),
+    );
     if let Some(expected) = &scenario.expect.review {
         let actual = server.review();
         assert_eq!(
@@ -204,6 +221,8 @@ struct Scenario {
     crucible: Option<Crucible>,
     #[serde(default)]
     hooks: BTreeMap<String, String>,
+    #[serde(default)]
+    global_hooks: BTreeMap<String, String>,
     expect: Expectation,
 }
 

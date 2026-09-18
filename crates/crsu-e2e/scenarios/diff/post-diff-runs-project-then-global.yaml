@@ -1,4 +1,4 @@
-name: post-diff hook receives the created review
+name: post-diff runs the project hook before the global hook
 repository:
   base_branch: main
   base_files:
@@ -17,7 +17,12 @@ command:
 hooks:
   post-diff: |
     #!/bin/sh
+    echo project >> .git/crsu/hooks/order.log
     cat > .git/crsu/hooks/captured.json
+global_hooks:
+  post-diff: |
+    #!/bin/sh
+    echo global >> .git/crsu/hooks/order.log
 crucible:
   project: COMMON
   repository: java-common
@@ -29,6 +34,9 @@ expect:
   success: true
   stdout_contains:
     - "Review: COMMON-123"
+  hook_order:
+    - project
+    - global
   hook_json:
     version: 1
     scope: project

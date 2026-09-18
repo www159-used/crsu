@@ -1,0 +1,28 @@
+name: pre-diff runs the global hook before the project hook
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command:
+  - diff
+  - --yes
+  - main
+global_hooks:
+  pre-diff: |
+    #!/bin/sh
+    mkdir -p .git/crsu/hooks
+    echo global >> .git/crsu/hooks/order.log
+hooks:
+  pre-diff: |
+    #!/bin/sh
+    echo project >> .git/crsu/hooks/order.log
+expect:
+  success: true
+  stdout_contains:
+    - "Base: main"
+  hook_order:
+    - global
+    - project

@@ -1,0 +1,23 @@
+name: global pre-diff hook failure refuses to submit
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: feature
+  feature_files:
+    README.md: "feature\n"
+command:
+  - diff
+  - --yes
+  - main
+global_hooks:
+  pre-diff: |
+    #!/bin/sh
+    echo not ready globally >&2
+    exit 1
+expect:
+  success: false
+  stderr_contains:
+    - "pre-diff hook exited 1: not ready globally"
+  stdout_contains:
+    - "Base: main"

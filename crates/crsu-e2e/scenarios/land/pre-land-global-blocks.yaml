@@ -1,4 +1,4 @@
-name: post-land hook receives the closed review
+name: global pre-land hook failure refuses to push
 repository:
   base_branch: main
   base_files:
@@ -13,10 +13,11 @@ repository:
   origin:
     default_branch: main
 command: [land, --yes]
-hooks:
-  post-land: |
+global_hooks:
+  pre-land: |
     #!/bin/sh
-    cat > .git/crsu/hooks/captured.json
+    echo keep the tab open >&2
+    exit 1
 crucible:
   project: COMMON
   token: test-token
@@ -31,15 +32,8 @@ crucible:
     - username: alice
       completed: true
 expect:
-  success: true
+  success: false
+  stderr_contains:
+    - "pre-land hook exited 1: keep the tab open"
   stdout_contains:
-    - "Closed: COMMON-99"
-  hook_json:
-    version: 1
-    scope: project
-    event: post-land
-    command: land
-    review_id: COMMON-99
-    url: http://crucible/cru/COMMON-99
-    branch: feature
-    target: origin/feature
+    - "Review: COMMON-99"

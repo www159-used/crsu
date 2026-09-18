@@ -28,7 +28,7 @@ description: >-
 
 `patches` 清过往全量 patch。`diff` 只追加，不会自动删旧的。
 
-`pre-diff` / `pre-land` / `post-diff` / `post-land` 是 `.git/crsu/hooks/` 下的可执行文件。stdin 为 JSON。pre 非 0 则中止命令；post 在成功后跑，失败不回滚，用来关 agent session、清 zellij tab。没有 hook 就是空操作。
+`pre-diff` / `pre-land` / `post-diff` / `post-land` 是可执行文件，全局在 `$XDG_CONFIG_HOME/crsu/hooks/`（未设则 `~/.config/crsu/hooks/`），项目在 `.git/crsu/hooks/`。两层都跑：`pre-*` 先全局后项目，非 0 则中止；`post-*` 先项目后全局，失败不回滚，用来关 agent session、清 zellij tab。stdin 为 JSON。没有 hook 就是空操作。
 
 ## 出评审
 
@@ -90,10 +90,10 @@ list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`lat
 
 ## Hook
 
-可执行文件：`.git/crsu/hooks/pre-diff`、`post-diff`、`pre-land`、`post-land`（共享 git 目录，linked worktree 也能看到）。stdin 一段 JSON。
+可执行文件：`pre-diff`、`post-diff`、`pre-land`、`post-land`。全局 `$XDG_CONFIG_HOME/crsu/hooks/`（未设则 `~/.config/crsu/hooks/`），项目 `.git/crsu/hooks/`（共享 git 目录，linked worktree 也能看到）。两层都跑，不互相覆盖。stdin 一段 JSON，`scope` 为 `global` 或 `project`。
 
 ```json
-{"version":1,"event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature"}
+{"version":1,"scope":"project","event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature"}
 ```
 
 `version` 是 hook 协议版本。多出来的键可以忽略；`version` 升了再按新合同解析。只在字段改义或删除时升版本。

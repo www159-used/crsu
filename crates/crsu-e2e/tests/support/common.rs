@@ -65,11 +65,19 @@ pub fn crsu_binary() -> &'static Path {
 
 /// Writes executable hook scripts under `.git/crsu/hooks/`.
 pub fn install_crsu_hooks(repository: &Path, hooks: &BTreeMap<String, String>) {
+    install_hooks(&repository.join(".git/crsu/hooks"), hooks);
+}
+
+/// Writes executable hook scripts under `$XDG_CONFIG_HOME/crsu/hooks/`.
+pub fn install_global_hooks(xdg_config_home: &Path, hooks: &BTreeMap<String, String>) {
+    install_hooks(&xdg_config_home.join("crsu/hooks"), hooks);
+}
+
+fn install_hooks(directory: &Path, hooks: &BTreeMap<String, String>) {
     if hooks.is_empty() {
         return;
     }
-    let directory = repository.join(".git/crsu/hooks");
-    std::fs::create_dir_all(&directory).expect("create crsu hooks directory");
+    std::fs::create_dir_all(directory).expect("create crsu hooks directory");
     for (name, body) in hooks {
         assert!(
             name.chars()
@@ -90,6 +98,15 @@ pub fn install_crsu_hooks(repository: &Path, hooks: &BTreeMap<String, String>) {
 pub fn captured_hook_json(repository: &Path) -> String {
     std::fs::read_to_string(repository.join(".git/crsu/hooks/captured.json"))
         .expect("read captured hook json")
+}
+
+pub fn captured_hook_order(repository: &Path) -> Vec<String> {
+    std::fs::read_to_string(repository.join(".git/crsu/hooks/order.log"))
+        .expect("read hook order log")
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub fn write_files(repository: &Path, files: &BTreeMap<String, String>) {
@@ -198,9 +215,21 @@ pub fn run_crsu(
     arguments: &[String],
     crucible: Option<&CrucibleEnv<'_>>,
 ) -> Output {
+    let isolated = TempDir::new().expect("isolate XDG_CONFIG_HOME");
+    run_crsu_with_xdg(directory, arguments, crucible, isolated.path())
+}
+
+/// Like [`run_crsu`], but uses `xdg_config_home` for global hooks.
+pub fn run_crsu_with_xdg(
+    directory: Option<&Path>,
+    arguments: &[String],
+    crucible: Option<&CrucibleEnv<'_>>,
+    xdg_config_home: &Path,
+) -> Output {
     let mut command = Command::new(crsu_binary());
     command.args(arguments);
     command.env("CRSU_NO_CLIPBOARD", "1");
+    command.env("XDG_CONFIG_HOME", xdg_config_home);
     if let Some(directory) = directory {
         command.current_dir(directory);
     }
@@ -247,6 +276,9 @@ pub struct Expectation {
     /// JSON written by a hook script to `.git/crsu/hooks/captured.json`.
     #[serde(default)]
     pub hook_json: Option<serde_json::Value>,
+    /// Lines written by hook scripts to `.git/crsu/hooks/order.log`.
+    #[serde(default)]
+    pub hook_order: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -317,6 +349,29 @@ pub fn assert_no_token_leak(name: &str, output: &Output, token: &str) {
         !combined.contains(token),
         "scenario '{name}' leaked the Crucible token"
     );
+}
+
+pub fn assert_hooks(
+    name: &str,
+    repository: &Path,
+    expect: &Expectation,
+    rewrite_origin: Option<(&str, &str)>,
+) {
+    if let Some(expected) = &expect.hook_json {
+        assert_stdout_json(
+            name,
+            &captured_hook_json(repository),
+            expected,
+            rewrite_origin,
+        );
+    }
+    if !expect.hook_order.is_empty() {
+        assert_eq!(
+            captured_hook_order(repository),
+            expect.hook_order,
+            "scenario '{name}' hook order"
+        );
+    }
 }
 
 pub fn assert_contains_all(name: &str, actual: &str, expected: &[String]) {

@@ -1,9 +1,9 @@
 //! Executes the declarative scenarios in `e2e/land/*.yaml`.
 
 use super::common::{
-    CrucibleEnv, Expectation, assert_contains_all, assert_no_token_leak, assert_scenario,
-    assert_stdout_json, captured_hook_json, create_origin, init_repository, install_crsu_hooks,
-    load_yaml, run_crsu, run_git, write_files,
+    CrucibleEnv, Expectation, assert_contains_all, assert_hooks, assert_no_token_leak,
+    assert_scenario, create_origin, init_repository, install_crsu_hooks, install_global_hooks,
+    load_yaml, run_crsu_with_xdg, run_git, write_files,
 };
 use crsu_testkit::{LandFixture, LandReviewer, MockCrucible};
 use serde::Deserialize;
@@ -18,6 +18,8 @@ pub fn run(path: &Path) {
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
     install_crsu_hooks(&repository.working_directory, &scenario.hooks);
+    let xdg = TempDir::new().expect("isolate XDG_CONFIG_HOME");
+    install_global_hooks(xdg.path(), &scenario.global_hooks);
     let server = MockCrucible::start_land(&LandFixture {
         token: scenario.crucible.token.clone(),
         review_id: scenario.crucible.review_id.clone(),
@@ -33,10 +35,11 @@ fn run_scenario(scenario: &Scenario) {
         reviewers: &[],
         repository: None,
     };
-    let output = run_crsu(
+    let output = run_crsu_with_xdg(
         Some(&repository.working_directory),
         &scenario.command,
         Some(&env),
+        xdg.path(),
     );
     if scenario.expect.success {
         server.assert_review_request();
@@ -45,14 +48,12 @@ fn run_scenario(scenario: &Scenario) {
     assert_scenario(&scenario.name, &output, &scenario.expect);
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
     assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
-    if let Some(expected) = &scenario.expect.hook_json {
-        assert_stdout_json(
-            &scenario.name,
-            &captured_hook_json(&repository.working_directory),
-            expected,
-            Some((server.base_url().as_str(), "http://crucible")),
-        );
-    }
+    assert_hooks(
+        &scenario.name,
+        &repository.working_directory,
+        &scenario.expect,
+        Some((server.base_url().as_str(), "http://crucible")),
+    );
     assert_no_token_leak(&scenario.name, &output, &scenario.crucible.token);
 }
 
@@ -125,6 +126,8 @@ struct Scenario {
     crucible: Crucible,
     #[serde(default)]
     hooks: BTreeMap<String, String>,
+    #[serde(default)]
+    global_hooks: BTreeMap<String, String>,
     expect: Expectation,
 }
 

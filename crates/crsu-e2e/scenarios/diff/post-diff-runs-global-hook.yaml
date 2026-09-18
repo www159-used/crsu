@@ -1,4 +1,4 @@
-name: post-diff hook receives the created review
+name: global post-diff hook receives the created review
 repository:
   base_branch: main
   base_files:
@@ -14,9 +14,10 @@ command:
   - diff
   - --yes
   - main
-hooks:
+global_hooks:
   post-diff: |
     #!/bin/sh
+    mkdir -p .git/crsu/hooks
     cat > .git/crsu/hooks/captured.json
 crucible:
   project: COMMON
@@ -31,7 +32,7 @@ expect:
     - "Review: COMMON-123"
   hook_json:
     version: 1
-    scope: project
+    scope: global
     event: post-diff
     command: diff
     action: created
