@@ -3,7 +3,7 @@
 use super::common::{
     CrucibleEnv, Expectation, assert_contains_all, assert_hooks, assert_no_token_leak,
     assert_scenario, create_origin, init_repository, install_crsu_hooks, install_global_hooks,
-    load_yaml, run_crsu_with_xdg, run_git, write_files,
+    load_yaml, run_crsu_with_config_home, run_git, write_files,
 };
 use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
 use serde::Deserialize;
@@ -19,9 +19,9 @@ pub fn run(path: &Path) {
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
     install_crsu_hooks(&repository.working_directory, &scenario.hooks);
-    let xdg = TempDir::new().expect("isolate XDG_CONFIG_HOME");
-    install_global_hooks(xdg.path(), &scenario.global_hooks);
-    let output = run_with_optional_crucible(&repository, scenario, xdg.path());
+    let config_home = TempDir::new().expect("isolate CRSU_CONFIG_HOME");
+    install_global_hooks(config_home.path(), &scenario.global_hooks);
+    let output = run_with_optional_crucible(&repository, scenario, config_home.path());
 
     assert_scenario(&scenario.name, &output, &scenario.expect);
     let subject = repository.git_output(["show", "-s", "--format=%s", "HEAD"]);
@@ -42,14 +42,14 @@ fn run_scenario(scenario: &Scenario) {
 fn run_with_optional_crucible(
     repository: &ScenarioRepository,
     scenario: &Scenario,
-    xdg_config_home: &Path,
+    config_home: &Path,
 ) -> Output {
     let Some(crucible) = &scenario.crucible else {
-        let output = run_crsu_with_xdg(
+        let output = run_crsu_with_config_home(
             Some(&repository.working_directory),
             &scenario.command,
             None,
-            xdg_config_home,
+            config_home,
         );
         assert_hooks(
             &scenario.name,
@@ -105,11 +105,11 @@ fn run_with_optional_crucible(
         reviewers: &crucible.reviewers,
         repository: crucible.repository.as_deref(),
     };
-    let output = run_crsu_with_xdg(
+    let output = run_crsu_with_config_home(
         Some(&repository.working_directory),
         &scenario.command,
         Some(&env),
-        xdg_config_home,
+        config_home,
     );
     server.assert_review_request();
     assert_hooks(

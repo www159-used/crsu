@@ -3,7 +3,6 @@ use std::process::ExitCode;
 
 mod clipboard;
 mod crucible;
-mod crucible_conf;
 mod git_repository;
 mod hooks;
 mod init_model;
@@ -113,9 +112,16 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// 以交互式向导配置当前仓库。
-    Init,
-    /// 查看或精确修改当前仓库的配置。
+    Init {
+        /// 写入用户级配置目录的 `config.toml`，不写当前仓库。
+        #[arg(long)]
+        global: bool,
+    },
+    /// 查看或精确修改配置。
     Config {
+        /// 读写用户级配置目录，不需要当前仓库。
+        #[arg(long)]
+        global: bool,
         #[command(subcommand)]
         command: ConfigCommand,
     },
@@ -339,8 +345,8 @@ enum ReviewerCommand {
 #[must_use]
 pub fn run(cli: Cli) -> ExitCode {
     match cli.command {
-        Command::Init => init_tui::run(),
-        Command::Config { command } => config(command),
+        Command::Init { global } => init_tui::run(global),
+        Command::Config { global, command } => config(global, command),
         Command::Doctor => doctor(),
         Command::Status { review_ids } => status(&review_ids),
         Command::Diff {
@@ -361,21 +367,38 @@ pub fn run(cli: Cli) -> ExitCode {
     }
 }
 
-fn config(command: ConfigCommand) -> ExitCode {
-    let mut config = match project_config::ProjectConfig::load() {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            eprintln!("config failed: project is not initialized; run `crsu init`");
-            return ExitCode::FAILURE;
-        }
-        Err(error) => {
-            eprintln!("config failed: {error}");
-            return ExitCode::FAILURE;
-        }
+fn config(global: bool, command: ConfigCommand) -> ExitCode {
+    if global
+        && matches!(
+            command,
+            ConfigCommand::Set {
+                key: ConfigKey::Repository,
+                ..
+            } | ConfigCommand::Unset {
+                key: UnsetConfigKey::Repository
+            }
+        )
+    {
+        eprintln!("config failed: repository is project-only; omit --global");
+        return ExitCode::FAILURE;
+    }
+
+    let mutating = matches!(
+        command,
+        ConfigCommand::Set { .. }
+            | ConfigCommand::Unset { .. }
+            | ConfigCommand::Reviewer {
+                command: ReviewerCommand::Add { .. } | ReviewerCommand::Remove { .. }
+            }
+    );
+    let mut config = match load_editable_config(global, mutating) {
+        Ok(config) => config,
+        Err(code) => return code,
     };
 
     let changed = match command {
         ConfigCommand::Show => {
+            println!("scope = {}", if global { "global" } else { "project" });
             println!("url = {}", config.crucible.url);
             println!("token = <redacted>");
             println!("project = {}", config.crucible.project);
@@ -427,7 +450,12 @@ fn config(command: ConfigCommand) -> ExitCode {
     };
 
     if changed {
-        match config.save() {
+        let saved = if global {
+            config.save_global()
+        } else {
+            config.save()
+        };
+        match saved {
             Ok(path) => println!("Saved: {}", path.display()),
             Err(error) => {
                 eprintln!("config failed: {error}");
@@ -436,6 +464,34 @@ fn config(command: ConfigCommand) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+fn load_editable_config(
+    global: bool,
+    mutating: bool,
+) -> Result<project_config::ProjectConfig, ExitCode> {
+    let loaded = if global {
+        project_config::ProjectConfig::load_global()
+    } else {
+        project_config::ProjectConfig::load()
+    };
+    match loaded {
+        Ok(Some(config)) => Ok(config),
+        Ok(None) if mutating && global => Ok(project_config::ProjectConfig::blank()),
+        Ok(None) => {
+            let hint = if global {
+                "global config is missing; run `crsu init --global` or `crsu config --global set`"
+            } else {
+                "project is not initialized; run `crsu init`"
+            };
+            eprintln!("config failed: {hint}");
+            Err(ExitCode::FAILURE)
+        }
+        Err(error) => {
+            eprintln!("config failed: {error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
 }
 
 fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> ExitCode {

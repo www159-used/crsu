@@ -63,7 +63,7 @@ pub fn render_search_results(
 /// Panics if Ratatui cannot create or draw the in-memory test terminal.
 #[must_use]
 pub fn render_login_dialog(width: u16, height: u16) -> String {
-    let mut app = App::new();
+    let mut app = App::new(false).expect("load global config");
     app.flow.advance();
     app.pending_login = true;
     "Signing in and loading candidates...".clone_into(&mut app.message);
@@ -78,7 +78,7 @@ pub fn render_login_dialog(width: u16, height: u16) -> String {
 /// Panics if Ratatui cannot create or draw the in-memory test terminal.
 #[must_use]
 pub fn render_exit_confirmation(width: u16, height: u16) -> String {
-    let mut app = App::new();
+    let mut app = App::new(false).expect("load global config");
     app.confirm_exit = true;
     render_test_app(&app, width, height)
 }
@@ -91,7 +91,7 @@ pub fn render_exit_confirmation(width: u16, height: u16) -> String {
 /// Panics if Ratatui cannot create or draw the in-memory test terminal.
 #[must_use]
 pub fn render_required_field_error(width: u16, height: u16) -> String {
-    let mut app = App::new();
+    let mut app = App::new(false).expect("load global config");
     app.show_error("Crucible URL is required".to_owned());
     render_test_app(&app, width, height)
 }
@@ -116,9 +116,9 @@ fn render_test_app(app: &App, width: u16, height: u16) -> String {
         .join("\n")
 }
 
-pub fn run() -> ExitCode {
+pub fn run(global: bool) -> ExitCode {
     let mut terminal = ratatui::init();
-    let result = run_app(&mut terminal);
+    let result = run_app(&mut terminal, global);
     ratatui::restore();
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -129,8 +129,8 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn run_app(terminal: &mut ratatui::DefaultTerminal) -> Result<(), String> {
-    let mut app = App::new();
+fn run_app(terminal: &mut ratatui::DefaultTerminal, global: bool) -> Result<(), String> {
+    let mut app = App::new(global)?;
     loop {
         terminal
             .draw(|frame| app.render(frame))
@@ -242,14 +242,41 @@ struct App {
     pending_login: bool,
     confirm_exit: bool,
     error: Option<String>,
+    global: bool,
+    preferred_project: Option<String>,
 }
+
+fn prefill_url(env_url: Option<&str>, stored: Option<&ProjectConfig>) -> String {
+    env_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            stored
+                .map(|config| config.crucible.url.clone())
+                .filter(|url| !url.is_empty())
+        })
+        .unwrap_or_default()
+}
+
 impl App {
-    fn new() -> Self {
-        let defaults = crate::crucible_conf::defaults();
-        Self {
+    fn new(global: bool) -> Result<Self, String> {
+        let stored = crate::project_config::ProjectConfig::load_global()?;
+        let reviewers = stored
+            .as_ref()
+            .map(|config| config.crucible.reviewers.clone())
+            .unwrap_or_default();
+        let preferred_project = stored
+            .as_ref()
+            .map(|config| config.crucible.project.clone())
+            .filter(|project| !project.is_empty());
+        Ok(Self {
             flow: FormFlow::new(),
-            url: defaults.url,
-            username: defaults.user,
+            url: prefill_url(
+                std::env::var("CRSU_CRUCIBLE_URL").ok().as_deref(),
+                stored.as_ref(),
+            ),
+            username: String::new(),
             password: String::new(),
             token: String::new(),
             projects: vec![],
@@ -259,7 +286,7 @@ impl App {
             project: 0,
             repository: 0,
             user: 0,
-            reviewers: vec![],
+            reviewers,
             reviewer_pane: ReviewerPane::Candidates,
             selected_reviewer: 0,
             search_query: String::new(),
@@ -268,7 +295,9 @@ impl App {
             pending_login: false,
             confirm_exit: false,
             error: None,
-        }
+            global,
+            preferred_project,
+        })
     }
     #[cfg(feature = "test-support")]
     fn for_overflow_test(
@@ -277,7 +306,7 @@ impl App {
         cursor: usize,
         selected_reviewer_count: usize,
     ) -> Self {
-        let mut app = Self::new();
+        let mut app = Self::new(false).expect("load global config");
         let names = |prefix: &str| {
             (1..=item_count)
                 .map(|index| format!("{prefix}-{index:02}"))
@@ -388,10 +417,17 @@ impl App {
             .unwrap_or(0);
         self.repository_candidates = candidates.repositories;
         self.users = candidates.reviewers;
+        if let Some(index) = self.preferred_project.as_ref().and_then(|preferred| {
+            self.projects
+                .iter()
+                .position(|project| project == preferred)
+        }) {
+            self.project = index;
+        }
         Ok(())
     }
     fn save(&self) -> Result<(), String> {
-        ProjectConfig {
+        let mut config = ProjectConfig {
             schema_version: crate::project_config::CURRENT_SCHEMA_VERSION,
             crucible: CrucibleConfig {
                 url: self.url.clone(),
@@ -406,9 +442,12 @@ impl App {
                     .map(|repository| repository.location.clone()),
                 reviewers: self.reviewers.clone(),
             },
+        };
+        if self.global {
+            config.save_global().map(|_| ())
+        } else {
+            config.save().map(|_| ())
         }
-        .save()
-        .map(|_| ())
     }
     fn back(&mut self) {
         self.clear_search();
@@ -989,11 +1028,21 @@ fn render_scrollable_list(
 
 #[cfg(test)]
 mod tests {
-    use super::App;
+    use super::{App, prefill_url};
+    use crate::project_config::ProjectConfig;
+
+    #[test]
+    fn prefill_url_prefers_environment_then_global_config() {
+        let mut stored = ProjectConfig::blank();
+        stored.set_url("http://global".to_owned());
+        assert_eq!(prefill_url(Some("http://env"), Some(&stored)), "http://env");
+        assert_eq!(prefill_url(None, Some(&stored)), "http://global");
+        assert_eq!(prefill_url(Some("  "), None), "");
+    }
 
     #[test]
     fn confirmed_search_stays_on_the_page_and_navigates_matching_candidates() {
-        let mut app = App::new();
+        let mut app = App::new(false).expect("load global config");
         app.flow.advance();
         app.flow.advance();
         app.projects = vec![

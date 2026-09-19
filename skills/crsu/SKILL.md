@@ -12,7 +12,9 @@ description: >-
 # crsu
 
 当前仓库里走 Git + Crucible 评审时用 `crsu`。
-命令细节以 `crsu --help` / `crsu status --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。
+命令细节以 `crsu --help` / `crsu config --help` / `crsu status --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。
+
+连接信息：环境变量 > `.git/crsu/config.toml` > 用户级 `config.toml`（`directories`；可用 `CRSU_CONFIG_HOME` 覆盖）。跨仓库共用的 url/token/project 用 `crsu init --global` 或 `crsu config --global set`。FishEye 锚点只写项目配置。
 
 没有本地仓库、只读别人的评审页时，不要对评审做写操作。
 
@@ -28,7 +30,7 @@ description: >-
 
 `patches` 清过往全量 patch。`diff` 只追加，不会自动删旧的。
 
-`pre-diff` / `pre-land` / `post-diff` / `post-land` 是可执行文件，全局在 `$XDG_CONFIG_HOME/crsu/hooks/`（未设则 `~/.config/crsu/hooks/`），项目在 `.git/crsu/hooks/`。两层都跑：`pre-*` 先全局后项目，非 0 则中止；`post-*` 先项目后全局，失败不回滚，用来关 agent session、清 zellij tab。stdin 为 JSON。没有 hook 就是空操作。
+`pre-diff` / `pre-land` / `post-diff` / `post-land` 是可执行文件，全局在用户级 `hooks/`，项目在 `.git/crsu/hooks/`。两层都跑：`pre-*` 先全局后项目，非 0 则中止；`post-*` 先项目后全局，失败不回滚，用来关 agent session、清 zellij tab。stdin 为 JSON。没有 hook 就是空操作。
 
 ## 出评审
 
@@ -90,7 +92,7 @@ list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`lat
 
 ## Hook
 
-可执行文件：`pre-diff`、`post-diff`、`pre-land`、`post-land`。全局 `$XDG_CONFIG_HOME/crsu/hooks/`（未设则 `~/.config/crsu/hooks/`），项目 `.git/crsu/hooks/`（共享 git 目录，linked worktree 也能看到）。两层都跑，不互相覆盖。stdin 一段 JSON，`scope` 为 `global` 或 `project`。
+可执行文件：`pre-diff`、`post-diff`、`pre-land`、`post-land`。全局在用户级 `hooks/`，项目 `.git/crsu/hooks/`（共享 git 目录，linked worktree 也能看到）。两层都跑，不互相覆盖。stdin 一段 JSON，`scope` 为 `global` 或 `project`。
 
 ```json
 {"version":1,"scope":"project","event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature"}

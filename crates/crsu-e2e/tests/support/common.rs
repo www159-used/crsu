@@ -68,9 +68,9 @@ pub fn install_crsu_hooks(repository: &Path, hooks: &BTreeMap<String, String>) {
     install_hooks(&repository.join(".git/crsu/hooks"), hooks);
 }
 
-/// Writes executable hook scripts under `$XDG_CONFIG_HOME/crsu/hooks/`.
-pub fn install_global_hooks(xdg_config_home: &Path, hooks: &BTreeMap<String, String>) {
-    install_hooks(&xdg_config_home.join("crsu/hooks"), hooks);
+/// Writes executable hook scripts under `{config_home}/hooks/`.
+pub fn install_global_hooks(config_home: &Path, hooks: &BTreeMap<String, String>) {
+    install_hooks(&config_home.join("hooks"), hooks);
 }
 
 fn install_hooks(directory: &Path, hooks: &BTreeMap<String, String>) {
@@ -215,21 +215,21 @@ pub fn run_crsu(
     arguments: &[String],
     crucible: Option<&CrucibleEnv<'_>>,
 ) -> Output {
-    let isolated = TempDir::new().expect("isolate XDG_CONFIG_HOME");
-    run_crsu_with_xdg(directory, arguments, crucible, isolated.path())
+    let isolated = TempDir::new().expect("isolate CRSU_CONFIG_HOME");
+    run_crsu_with_config_home(directory, arguments, crucible, isolated.path())
 }
 
-/// Like [`run_crsu`], but uses `xdg_config_home` for global hooks.
-pub fn run_crsu_with_xdg(
+/// Like [`run_crsu`], but uses `config_home` as the user-level crsu directory.
+pub fn run_crsu_with_config_home(
     directory: Option<&Path>,
     arguments: &[String],
     crucible: Option<&CrucibleEnv<'_>>,
-    xdg_config_home: &Path,
+    config_home: &Path,
 ) -> Output {
     let mut command = Command::new(crsu_binary());
     command.args(arguments);
     command.env("CRSU_NO_CLIPBOARD", "1");
-    command.env("XDG_CONFIG_HOME", xdg_config_home);
+    command.env("CRSU_CONFIG_HOME", config_home);
     if let Some(directory) = directory {
         command.current_dir(directory);
     }

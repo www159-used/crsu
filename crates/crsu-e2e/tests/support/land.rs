@@ -3,7 +3,7 @@
 use super::common::{
     CrucibleEnv, Expectation, assert_contains_all, assert_hooks, assert_no_token_leak,
     assert_scenario, create_origin, init_repository, install_crsu_hooks, install_global_hooks,
-    load_yaml, run_crsu_with_xdg, run_git, write_files,
+    load_yaml, run_crsu_with_config_home, run_git, write_files,
 };
 use crsu_testkit::{LandFixture, LandReviewer, MockCrucible};
 use serde::Deserialize;
@@ -18,8 +18,8 @@ pub fn run(path: &Path) {
 fn run_scenario(scenario: &Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
     install_crsu_hooks(&repository.working_directory, &scenario.hooks);
-    let xdg = TempDir::new().expect("isolate XDG_CONFIG_HOME");
-    install_global_hooks(xdg.path(), &scenario.global_hooks);
+    let config_home = TempDir::new().expect("isolate CRSU_CONFIG_HOME");
+    install_global_hooks(config_home.path(), &scenario.global_hooks);
     let server = MockCrucible::start_land(&LandFixture {
         token: scenario.crucible.token.clone(),
         review_id: scenario.crucible.review_id.clone(),
@@ -35,11 +35,11 @@ fn run_scenario(scenario: &Scenario) {
         reviewers: &[],
         repository: None,
     };
-    let output = run_crsu_with_xdg(
+    let output = run_crsu_with_config_home(
         Some(&repository.working_directory),
         &scenario.command,
         Some(&env),
-        xdg.path(),
+        config_home.path(),
     );
     if scenario.expect.success {
         server.assert_review_request();

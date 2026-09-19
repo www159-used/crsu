@@ -1532,7 +1532,7 @@ impl Config {
             })
             .unwrap_or_default();
         if url.is_none() && project.is_none() && token.is_none() {
-            return crate::project_config::ProjectConfig::load()
+            return crate::project_config::ProjectConfig::load_resolved()
                 .map_err(CrucibleError::ProjectConfiguration)
                 .map(|config| {
                     config.map(|config| Self {

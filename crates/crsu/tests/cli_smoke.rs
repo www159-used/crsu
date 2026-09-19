@@ -122,6 +122,7 @@ reviewers = ["alice"]
         .expect("show config");
     assert!(show.status.success());
     let stdout = String::from_utf8(show.stdout).expect("UTF-8 config");
+    assert!(stdout.contains("scope = project"));
     assert!(stdout.contains("repository = logriver"));
     assert!(stdout.contains("token = <redacted>"));
     assert!(!stdout.contains("top-secret"));
@@ -135,6 +136,41 @@ reviewers = ["alice"]
     let saved = std::fs::read_to_string(config_path).expect("read updated config");
     assert!(!saved.contains("repository ="));
     assert!(!saved.contains("repository_location ="));
+}
+
+#[test]
+fn global_config_round_trips_without_a_git_repository() {
+    let config_home = tempfile::tempdir().expect("isolate CRSU_CONFIG_HOME");
+    let set = crsu()
+        .env("CRSU_CONFIG_HOME", config_home.path())
+        .args(["config", "--global", "set", "url", "http://cru"])
+        .output()
+        .expect("set global url");
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    let show = crsu()
+        .env("CRSU_CONFIG_HOME", config_home.path())
+        .args(["config", "--global", "show"])
+        .output()
+        .expect("show global config");
+    assert!(show.status.success());
+    let stdout = String::from_utf8(show.stdout).expect("UTF-8 config");
+    assert!(stdout.contains("scope = global"));
+    assert!(stdout.contains("url = http://cru"));
+    assert!(stdout.contains("token = <redacted>"));
+
+    let refused = crsu()
+        .env("CRSU_CONFIG_HOME", config_home.path())
+        .args(["config", "--global", "set", "repository", "logriver"])
+        .output()
+        .expect("set global repository");
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).expect("UTF-8 error");
+    assert!(stderr.contains("project-only"));
 }
 
 #[test]
@@ -252,12 +288,12 @@ fn diff_refuses_patches_over_one_thousand_lines() {
     std::fs::write(repository.path().join("wide.txt"), changed).expect("write wide file");
     git(repository.path(), &["add", "."]);
     git(repository.path(), &["commit", "-m", "too wide", "-q"]);
-    let xdg = tempfile::tempdir().expect("isolate XDG_CONFIG_HOME");
+    let config_home = tempfile::tempdir().expect("isolate CRSU_CONFIG_HOME");
 
     let refused = crsu()
         .args(["diff", "--yes", "main"])
         .current_dir(repository.path())
-        .env("XDG_CONFIG_HOME", xdg.path())
+        .env("CRSU_CONFIG_HOME", config_home.path())
         .output()
         .expect("run crsu diff");
     assert!(!refused.status.success());
@@ -270,7 +306,7 @@ fn diff_refuses_patches_over_one_thousand_lines() {
     let forced = crsu()
         .args(["diff", "--yes", "--force", "main"])
         .current_dir(repository.path())
-        .env("XDG_CONFIG_HOME", xdg.path())
+        .env("CRSU_CONFIG_HOME", config_home.path())
         .output()
         .expect("run crsu diff --force");
     assert!(

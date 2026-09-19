@@ -110,12 +110,7 @@ fn hook_path(repository: &Repository, event: &str, scope: Scope) -> Option<PathB
 }
 
 fn global_hooks_dir() -> Option<PathBuf> {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(xdg).join("crsu/hooks"));
-    }
-    std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(|home| PathBuf::from(home).join(".config/crsu/hooks"))
+    crate::project_config::global_crsu_dir().map(|directory| directory.join("hooks"))
 }
 
 fn format_failure(event: &str, status: i32, stderr: &str) -> String {
