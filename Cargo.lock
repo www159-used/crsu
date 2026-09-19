@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "crsu"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arboard",
  "clap",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "crsu-e2e"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "crsu",
  "crsu-testkit",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "crsu-testkit"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",
