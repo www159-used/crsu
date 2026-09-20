@@ -319,6 +319,53 @@ fn diff_refuses_patches_over_one_thousand_lines() {
 }
 
 #[test]
+fn diff_rejects_incomplete_configuration_before_calling_crucible() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    let config_home = tempfile::tempdir().expect("isolate CRSU_CONFIG_HOME");
+    git(repository.path(), &["init", "-b", "main", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "t@example.com"],
+    );
+    std::fs::write(repository.path().join("README"), "base\n").expect("write");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "base", "-q"]);
+    git(repository.path(), &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repository.path().join("README"), "changed\n").expect("write");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "change", "-q"]);
+    std::fs::write(
+        config_home.path().join("config.toml"),
+        r#"schema_version = 2
+
+[crucible]
+url = "http://crucible"
+token = "secret"
+project = ""
+"#,
+    )
+    .expect("write incomplete global config");
+
+    let refused = crsu()
+        .args(["diff", "--yes", "main"])
+        .current_dir(repository.path())
+        .env("CRSU_CONFIG_HOME", config_home.path())
+        .output()
+        .expect("run crsu diff with incomplete config");
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).expect("UTF-8 stderr");
+    assert!(
+        stderr.contains("project is empty") && stderr.contains("crsu init"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("400") && !stderr.contains("Invalid project key"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn land_rejects_cross_branch_targets() {
     let repository = tempfile::tempdir().expect("temporary repository");
     git(repository.path(), &["init", "-b", "main", "-q"]);

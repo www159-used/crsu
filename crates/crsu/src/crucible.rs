@@ -55,13 +55,6 @@ impl Client {
         self.get_names("/rest-service/projects-v1", "/projectData", "key")
     }
 
-    pub fn has_fisheye(&self) -> Result<bool, CrucibleError> {
-        self.get("/rest-service-fecru/server-v1")?
-            .get("isFishEye")
-            .and_then(Value::as_bool)
-            .ok_or(CrucibleError::MalformedCandidates)
-    }
-
     pub fn repositories(&self) -> Result<Vec<RepositoryCandidate>, CrucibleError> {
         let response = self.get("/rest-service/repositories-v1")?;
         let values = response
@@ -1031,9 +1024,7 @@ pub fn set_comment_defects(
 }
 
 pub(crate) fn configured() -> Result<Config, CrucibleError> {
-    Config::from_environment()?.ok_or(CrucibleError::MissingConfiguration(
-        "CRSU_CRUCIBLE_URL / project configuration",
-    ))
+    Config::from_environment()?.ok_or(CrucibleError::NotConfigured)
 }
 
 /// The Crucible web URL of a review.
@@ -1532,19 +1523,11 @@ impl Config {
             })
             .unwrap_or_default();
         if url.is_none() && project.is_none() && token.is_none() {
-            return crate::project_config::ProjectConfig::load_resolved()
-                .map_err(CrucibleError::ProjectConfiguration)
-                .map(|config| {
-                    config.map(|config| Self {
-                        http: reqwest::blocking::Client::new(),
-                        url: config.crucible.url,
-                        project: config.crucible.project,
-                        token: config.crucible.token,
-                        repository: config.crucible.repository,
-                        repository_location: config.crucible.repository_location,
-                        reviewers: config.crucible.reviewers,
-                    })
-                });
+            return match crate::project_config::ProjectConfig::load_resolved() {
+                Ok(Some(config)) => Self::from_stored(config).map(Some),
+                Ok(None) => Ok(None),
+                Err(error) => Err(CrucibleError::ProjectConfiguration(error)),
+            };
         }
         Ok(Some(Self {
             http: reqwest::blocking::Client::new(),
@@ -1555,6 +1538,18 @@ impl Config {
             repository_location,
             reviewers,
         }))
+    }
+
+    fn from_stored(config: crate::project_config::ProjectConfig) -> Result<Self, CrucibleError> {
+        Ok(Self {
+            http: reqwest::blocking::Client::new(),
+            url: require_stored("url", config.crucible.url)?,
+            project: require_stored("project", config.crucible.project)?,
+            token: require_stored("token", config.crucible.token)?,
+            repository: config.crucible.repository,
+            repository_location: config.crucible.repository_location,
+            reviewers: config.crucible.reviewers,
+        })
     }
 
     fn validate_anchor(&self) -> Result<(), CrucibleError> {
@@ -1584,7 +1579,19 @@ impl Config {
 }
 
 fn required(name: &'static str, value: Option<String>) -> Result<String, CrucibleError> {
-    value.ok_or(CrucibleError::MissingConfiguration(name))
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or(CrucibleError::MissingConfiguration(name))
+}
+
+fn require_stored(field: &'static str, value: String) -> Result<String, CrucibleError> {
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        Err(CrucibleError::IncompleteConfiguration(field))
+    } else {
+        Ok(value)
+    }
 }
 
 #[derive(Debug)]
@@ -1606,6 +1613,8 @@ pub enum CrucibleError {
     PatchNotFound(String),
     NoPatchesToUpdate,
     MissingConfiguration(&'static str),
+    IncompleteConfiguration(&'static str),
+    NotConfigured,
     ProjectConfiguration(String),
     AnchorMismatch {
         repository: String,
@@ -1653,6 +1662,14 @@ impl fmt::Display for CrucibleError {
             Self::PatchNotFound(patch_id) => write!(formatter, "patch not found: {patch_id}"),
             Self::NoPatchesToUpdate => write!(formatter, "no patches to delete; pass patch ids"),
             Self::MissingConfiguration(name) => write!(formatter, "missing {name}"),
+            Self::IncompleteConfiguration(field) => write!(
+                formatter,
+                "configuration is incomplete: {field} is empty; run `crsu init`"
+            ),
+            Self::NotConfigured => write!(
+                formatter,
+                "not configured; run `crsu init` or set CRSU_CRUCIBLE_URL / CRSU_CRUCIBLE_PROJECT / CRSU_CRUCIBLE_TOKEN"
+            ),
             Self::ProjectConfiguration(error) => {
                 write!(formatter, "project configuration failed: {error}")
             }
@@ -1674,9 +1691,17 @@ impl fmt::Display for CrucibleError {
 
 #[cfg(test)]
 mod tests {
-    use super::Client;
+    use super::{Client, CrucibleError};
     use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
+
+    #[test]
+    fn incomplete_configuration_points_at_init() {
+        let error = CrucibleError::IncompleteConfiguration("project");
+        let message = error.to_string();
+        assert!(message.contains("project is empty"));
+        assert!(message.contains("crsu init"));
+    }
 
     #[test]
     fn reads_project_and_repository_candidates_with_the_login_token() {

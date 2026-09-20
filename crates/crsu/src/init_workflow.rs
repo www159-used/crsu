@@ -19,11 +19,9 @@ pub(crate) fn load_candidates(
     if projects.is_empty() {
         return Err("Crucible returned no projects".to_owned());
     }
-    let repositories = if client.has_fisheye().map_err(|error| error.to_string())? {
-        client.repositories().map_err(|error| error.to_string())?
-    } else {
-        Vec::new()
-    };
+    // Crucible-only installs often report isFishEye=false but still expose
+    // repositories-v1; gate on the repo list itself, not the FishEye flag.
+    let repositories = client.repositories().map_err(|error| error.to_string())?;
     let reviewers = client
         .users()
         .map_err(|error| error.to_string())?
