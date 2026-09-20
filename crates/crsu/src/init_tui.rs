@@ -242,8 +242,14 @@ struct App {
     pending_login: bool,
     confirm_exit: bool,
     error: Option<String>,
-    global: bool,
+    scope: ConfigScope,
     preferred_project: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum ConfigScope {
+    Project,
+    Global,
 }
 
 fn prefill_url(env_url: Option<&str>, stored: Option<&ProjectConfig>) -> String {
@@ -295,7 +301,11 @@ impl App {
             pending_login: false,
             confirm_exit: false,
             error: None,
-            global,
+            scope: if global {
+                ConfigScope::Global
+            } else {
+                ConfigScope::Project
+            },
             preferred_project,
         })
     }
@@ -443,10 +453,9 @@ impl App {
                 reviewers: self.reviewers.clone(),
             },
         };
-        if self.global {
-            config.save_global().map(|_| ())
-        } else {
-            config.save().map(|_| ())
+        match self.scope {
+            ConfigScope::Global => config.save_global().map(|_| ()),
+            ConfigScope::Project => config.save().map(|_| ()),
         }
     }
     fn back(&mut self) {

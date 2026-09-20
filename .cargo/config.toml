@@ -1,0 +1,4 @@
+[alias]
+lint = "clippy --all-targets -- -D warnings"
+rel = "build --release --locked"
+local-install = "install --path crates/crsu --locked --force"

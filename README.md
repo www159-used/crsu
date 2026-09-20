@@ -62,23 +62,27 @@ cp -R skills/crsu ~/.cursor/skills/crsu
 ## 开发
 
 ```bash
-make check
+cargo fmt
+cargo test
+cargo lint
+cargo rel
+cargo local-install
 cargo run -- doctor
 cargo run -- init
 ```
 
-常用开发入口：`make fmt`、`make test`、`make lint`、`make build`、`make install`。
+`lint` / `rel` / `local-install` 定义在 [`.cargo/config.toml`](.cargo/config.toml)。不要覆盖已有的 `cargo check`（类型检查）和 `cargo install`（装 crates.io 包）。多步门禁就是 `cargo fmt --check && cargo test && cargo lint`。
 
 ## 安装
 
 ```bash
-./scripts/install.sh
+cargo local-install
 ```
 
-默认安装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。若需要隔离安装目录：
+默认装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。隔离目录把 `--root` 接在后面：
 
 ```bash
-./scripts/install.sh --root /path/to/install-root
+cargo local-install --root /path/to/install-root
 ```
 
 声明式端到端场景在 `tests/e2e/**/*.yaml`；对应的 Rust runner 在
