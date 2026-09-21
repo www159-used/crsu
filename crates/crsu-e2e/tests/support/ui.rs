@@ -1,7 +1,7 @@
 use super::common::{Screen, Terminal, assert_visible, load_yaml, overflow_screen};
 use crsu::init_test_support::{
-    FormFlow, InputMode, Step, render_exit_confirmation, render_login_dialog,
-    render_required_field_error, render_search_results,
+    FormFlow, InputMode, Step, TextInsertField, render_exit_confirmation, render_login_dialog,
+    render_required_field_error, render_search_results, render_text_insert,
 };
 use serde::Deserialize;
 use std::path::Path;
@@ -34,6 +34,11 @@ enum Render {
     FormFlow {
         actions: Vec<Action>,
     },
+    TextInsert {
+        field: InsertField,
+        value: String,
+        terminal: Terminal,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +50,14 @@ enum Action {
     Back,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum InsertField {
+    Url,
+    Username,
+    Password,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct Expect {
     #[serde(default)]
@@ -53,6 +66,13 @@ struct Expect {
     visible_not_contains: Vec<String>,
     mode: Option<String>,
     step: Option<String>,
+    cursor: Option<Cursor>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct Cursor {
+    x: u16,
+    y: u16,
 }
 
 pub fn run(path: &Path) {
@@ -98,6 +118,27 @@ pub fn run(path: &Path) {
             &expect.visible_contains,
             &expect.visible_not_contains,
         ),
+        Render::TextInsert {
+            field,
+            value,
+            terminal,
+        } => {
+            let rendered = render_text_insert(
+                text_insert_field(field),
+                &value,
+                terminal.width,
+                terminal.height,
+            );
+            assert_visible(
+                &name,
+                &rendered.frame,
+                &expect.visible_contains,
+                &expect.visible_not_contains,
+            );
+            if let Some(cursor) = expect.cursor {
+                assert_eq!(rendered.cursor, (cursor.x, cursor.y), "{name} cursor");
+            }
+        }
         Render::FormFlow { actions } => {
             let mut form = FormFlow::new();
             for action in actions {
@@ -115,6 +156,14 @@ pub fn run(path: &Path) {
                 assert_eq!(step_name(form.step()), step, "{name} step");
             }
         }
+    }
+}
+
+fn text_insert_field(field: InsertField) -> TextInsertField {
+    match field {
+        InsertField::Url => TextInsertField::Url,
+        InsertField::Username => TextInsertField::Username,
+        InsertField::Password => TextInsertField::Password,
     }
 }
 

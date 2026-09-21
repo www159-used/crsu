@@ -2,10 +2,83 @@ use crate::crucible::{RepositoryCandidate, User};
 use crate::init_model::{FormFlow, InputMode};
 use crate::init_workflow::{detected_repository, load_candidates};
 use crate::project_config::{CrucibleConfig, ProjectConfig};
+use ratatui::crossterm::cursor::{DisableBlinking, EnableBlinking, SetCursorStyle};
 use ratatui::crossterm::event::{self, Event, KeyCode};
+use ratatui::crossterm::execute;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use std::io::stdout;
 use std::process::ExitCode;
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug)]
+pub enum TextInsertField {
+    Url,
+    Username,
+    Password,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug)]
+pub struct RenderedInsert {
+    pub frame: String,
+    pub cursor: (u16, u16),
+}
+
+#[cfg(feature = "test-support")]
+/// Renders an INSERT-mode text field for scenario assertions.
+///
+/// # Panics
+///
+/// Panics if Ratatui cannot create or draw the in-memory test terminal,
+/// or if INSERT mode did not place a terminal cursor.
+#[must_use]
+pub fn render_text_insert(
+    field: TextInsertField,
+    value: &str,
+    width: u16,
+    height: u16,
+) -> RenderedInsert {
+    let mut app = App::new(false).expect("load global config");
+    app.url.clear();
+    app.username.clear();
+    app.password.clear();
+    match field {
+        TextInsertField::Url => value.clone_into(&mut app.url),
+        TextInsertField::Username => {
+            app.flow.advance();
+            value.clone_into(&mut app.username);
+        }
+        TextInsertField::Password => {
+            app.flow.advance();
+            app.flow.toggle_authentication_field();
+            value.clone_into(&mut app.password);
+        }
+    }
+    app.enter_insert();
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create test terminal");
+    terminal
+        .draw(|frame| app.render(frame))
+        .expect("render test frame");
+    let position = terminal
+        .get_cursor_position()
+        .expect("insert cursor is visible");
+    let buffer = terminal.backend().buffer();
+    let frame = (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    RenderedInsert {
+        frame,
+        cursor: (position.x, position.y),
+    }
+}
 
 #[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug)]
@@ -117,11 +190,16 @@ fn render_test_app(app: &App, width: u16, height: u16) -> String {
 }
 
 pub fn run(global: bool) -> ExitCode {
+    let mut log = crate::log::CommandLog::start("init");
     let mut terminal = ratatui::init();
     let result = run_app(&mut terminal, global);
+    restore_cursor_style();
     ratatui::restore();
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            log.finish("ok");
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("init failed: {error}");
             ExitCode::FAILURE
@@ -135,6 +213,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, global: bool) -> Result<(), 
         terminal
             .draw(|frame| app.render(frame))
             .map_err(|error| error.to_string())?;
+        apply_insert_cursor_style(app.should_show_insert_cursor())?;
         if app.pending_login {
             if let Err(error) = app.finish_login() {
                 app.show_error(error);
@@ -394,7 +473,7 @@ impl App {
     }
     fn finish_login(&mut self) -> Result<(), String> {
         self.pending_login = false;
-        self.login()?;
+        crate::log::time("init", "login", || self.login())?;
         self.flow.advance();
         Ok(())
     }
@@ -453,10 +532,10 @@ impl App {
                 reviewers: self.reviewers.clone(),
             },
         };
-        match self.scope {
+        crate::log::time("init", "save", || match self.scope {
             ConfigScope::Global => config.save_global().map(|_| ()),
             ConfigScope::Project => config.save().map(|_| ()),
-        }
+        })
     }
     fn back(&mut self) {
         self.clear_search();
@@ -792,6 +871,31 @@ impl App {
         if let Some(error) = &self.error {
             Self::render_error_dialog(frame, error);
         }
+        if self.should_show_insert_cursor()
+            && let Some(position) = self.insert_cursor_position(body[1])
+        {
+            frame.set_cursor_position(position);
+        }
+    }
+    fn should_show_insert_cursor(&self) -> bool {
+        self.is_editing()
+            && self.is_text_step()
+            && !self.pending_login
+            && !self.confirm_exit
+            && self.error.is_none()
+    }
+    fn insert_cursor_position(&self, body: Rect) -> Option<Position> {
+        if !self.is_editing() || !self.is_text_step() {
+            return None;
+        }
+        let inner = body.inner(Margin::new(1, 1));
+        let (line, cols) = match self.flow.step().index() {
+            0 => (2, self.url.chars().count()),
+            1 if self.flow.authentication_field() => (4, self.password.chars().count()),
+            1 => (1, self.username.chars().count()),
+            _ => return None,
+        };
+        Some(caret_on_line(inner, line, cols))
     }
     fn render_login_dialog(&self, frame: &mut Frame) {
         let popup = centered_rect(48, 7, frame.area());
@@ -1005,6 +1109,33 @@ impl App {
     }
 }
 
+fn apply_insert_cursor_style(show: bool) -> Result<(), String> {
+    if show {
+        execute!(stdout(), EnableBlinking, SetCursorStyle::BlinkingBar)
+    } else {
+        execute!(stdout(), DisableBlinking, SetCursorStyle::DefaultUserShape)
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn restore_cursor_style() {
+    let _ = execute!(
+        stdout(),
+        DisableBlinking,
+        SetCursorStyle::DefaultUserShape
+    );
+}
+
+fn caret_on_line(inner: Rect, line: u16, cols: usize) -> Position {
+    let text_cols = u16::try_from(cols).unwrap_or(u16::MAX);
+    let x = inner.x.saturating_add(2).saturating_add(text_cols);
+    let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
+    Position {
+        x: x.min(max_x),
+        y: inner.y.saturating_add(line),
+    }
+}
+
 fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     let width = area.width.saturating_mul(width_percent).saturating_div(100);
     let height = height.min(area.height);
@@ -1037,8 +1168,42 @@ fn render_scrollable_list(
 
 #[cfg(test)]
 mod tests {
-    use super::{App, prefill_url};
+    use super::{App, Position, prefill_url};
     use crate::project_config::ProjectConfig;
+
+    #[test]
+    fn insert_mode_places_terminal_cursor_on_url_caret() {
+        let mut app = App::new(false).expect("load global config");
+        app.url = "https://crucible.test".to_owned();
+        app.enter_insert();
+        assert_eq!(rendered_cursor(&app), Position { x: 46, y: 6 });
+        app.exit_insert();
+        assert!(!app.should_show_insert_cursor());
+    }
+
+    #[test]
+    fn insert_mode_places_terminal_cursor_on_active_auth_field() {
+        let mut app = App::new(false).expect("load global config");
+        app.flow.advance();
+        app.username = "alice".to_owned();
+        app.password = "secret".to_owned();
+        app.enter_insert();
+        assert_eq!(rendered_cursor(&app), Position { x: 30, y: 5 });
+        app.flow.toggle_authentication_field();
+        assert_eq!(rendered_cursor(&app), Position { x: 31, y: 8 });
+    }
+
+    fn rendered_cursor(app: &App) -> Position {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).expect("test terminal");
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render insert frame");
+        terminal
+            .get_cursor_position()
+            .expect("insert cursor is visible")
+    }
 
     #[test]
     fn prefill_url_prefers_environment_then_global_config() {

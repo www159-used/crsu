@@ -1,0 +1,17 @@
+name: insert mode shows caret on url
+render:
+  kind: text-insert
+  field: url
+  value: https://crucible.test
+  terminal:
+    width: 80
+    height: 20
+expect:
+  visible_contains:
+    - "-- INSERT --"
+    - "> https://crucible.test"
+  visible_not_contains:
+    - "-- NORMAL --"
+  cursor:
+    x: 46
+    y: 6

@@ -8,6 +8,7 @@ mod hooks;
 mod init_model;
 mod init_tui;
 mod init_workflow;
+mod log;
 mod project_config;
 
 /// Narrow test-only interface for exercising init behavior from a separate crate.
@@ -16,8 +17,9 @@ mod project_config;
 pub mod init_test_support {
     pub use crate::init_model::{FormFlow, InputMode, Screen, Step};
     pub use crate::init_tui::{
-        OverflowScreen, render_exit_confirmation, render_login_dialog, render_overflow_screen,
-        render_required_field_error, render_search_results,
+        OverflowScreen, RenderedInsert, TextInsertField, render_exit_confirmation,
+        render_login_dialog, render_overflow_screen, render_required_field_error,
+        render_search_results, render_text_insert,
     };
 
     #[derive(Debug)]
@@ -391,6 +393,7 @@ fn config(global: bool, command: ConfigCommand) -> ExitCode {
                 command: ReviewerCommand::Add { .. } | ReviewerCommand::Remove { .. }
             }
     );
+    let mut log = mutating.then(|| crate::log::CommandLog::start("config"));
     let mut config = match load_editable_config(global, mutating) {
         Ok(config) => config,
         Err(code) => return code,
@@ -450,13 +453,26 @@ fn config(global: bool, command: ConfigCommand) -> ExitCode {
     };
 
     if changed {
-        let saved = if global {
+        let saved = if let Some(log) = &log {
+            log.time("save", || {
+                if global {
+                    config.save_global()
+                } else {
+                    config.save()
+                }
+            })
+        } else if global {
             config.save_global()
         } else {
             config.save()
         };
         match saved {
-            Ok(path) => println!("Saved: {}", path.display()),
+            Ok(path) => {
+                println!("Saved: {}", path.display());
+                if let Some(log) = &mut log {
+                    log.finish("ok");
+                }
+            }
             Err(error) => {
                 eprintln!("config failed: {error}");
                 return ExitCode::FAILURE;
@@ -495,6 +511,7 @@ fn load_editable_config(
 }
 
 fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> ExitCode {
+    let mut log = crate::log::CommandLog::start("diff");
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -503,93 +520,110 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> Exi
         }
     };
     if let Some(review_id) = attach {
-        return attach_review(&repository, review_id);
+        let code = attach_review(&repository, review_id);
+        if code == ExitCode::SUCCESS {
+            log.finish(format!("ok attach {review_id}"));
+        }
+        return code;
     }
-    match repository.review_diff(base) {
-        Ok(review_diff) => {
-            if let Err(code) = print_diff_plan(&review_diff, force) {
-                return code;
+    let review_diff = match log.time("git", || repository.review_diff(base)) {
+        Ok(review_diff) => review_diff,
+        Err(error) => {
+            eprintln!("diff failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(code) = print_diff_plan(&review_diff, force) {
+        return code;
+    }
+    if let Err(error) = log.time("pre-hooks", || {
+        hooks::run_pre(
+            &repository,
+            "pre-diff",
+            &serde_json::json!({
+                "event": "pre-diff",
+                "command": "diff",
+                "base": review_diff.base(),
+                "title": review_diff.title(),
+                "review_id": review_diff.review_id(),
+            }),
+        )
+    }) {
+        eprintln!("diff failed: {error}");
+        return ExitCode::FAILURE;
+    }
+    match crucible::submit_confirmation(&review_diff) {
+        Ok(None) => {}
+        Ok(Some(prompt)) => {
+            if !yes && !log.time("wait", || confirm_yes(&prompt)) {
+                println!("Aborted");
+                log.finish("aborted");
+                return ExitCode::SUCCESS;
             }
-            if let Err(error) = hooks::run_pre(
-                &repository,
-                "pre-diff",
-                &serde_json::json!({
-                    "event": "pre-diff",
-                    "command": "diff",
-                    "base": review_diff.base(),
-                    "title": review_diff.title(),
-                    "review_id": review_diff.review_id(),
-                }),
-            ) {
-                eprintln!("diff failed: {error}");
-                return ExitCode::FAILURE;
-            }
-            match crucible::submit_confirmation(&review_diff) {
-                Ok(None) => {}
-                Ok(Some(prompt)) => {
-                    if !yes && !confirm_yes(&prompt) {
-                        println!("Aborted");
-                        return ExitCode::SUCCESS;
+            match log.time("crucible", || crucible::submit_if_configured(&review_diff)) {
+                Ok(Some(submission)) => {
+                    println!("Review: {}", submission.review_id());
+                    if let Some((previous, current)) = submission.title_update() {
+                        println!("Title updated: {previous} -> {current}");
                     }
-                    match crucible::submit_if_configured(&review_diff) {
-                        Ok(Some(submission)) => {
-                            println!("Review: {}", submission.review_id());
-                            if let Some((previous, current)) = submission.title_update() {
-                                println!("Title updated: {previous} -> {current}");
-                            }
-                            if submission.objectives_were_updated() {
-                                println!("Objectives updated");
-                            }
-                            let clipboard = clipboard::summary(
-                                review_diff.base(),
-                                review_diff.title(),
-                                submission.review_url(),
-                            );
-                            match clipboard::copy(&clipboard) {
-                                Ok(()) => println!("Clipboard: {clipboard}"),
-                                Err(error) => eprintln!("clipboard failed: {error}"),
-                            }
-                            if submission.was_created()
-                                && let Err(error) = repository
-                                    .attach_review(submission.review_url(), submission.reviewers())
-                            {
-                                eprintln!(
-                                    "diff failed: review {} was created, but Git association failed: {error}",
-                                    submission.review_id()
-                                );
-                                return ExitCode::FAILURE;
-                            }
-                            hooks::run_post(
-                                &repository,
-                                "post-diff",
-                                &serde_json::json!({
-                                    "event": "post-diff",
-                                    "command": "diff",
-                                    "action": if submission.was_created() { "created" } else { "updated" },
-                                    "review_id": submission.review_id(),
-                                    "url": submission.review_url(),
-                                }),
-                            );
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            eprintln!("diff failed: {error}");
-                            return ExitCode::FAILURE;
-                        }
+                    if submission.objectives_were_updated() {
+                        println!("Objectives updated");
                     }
+                    let clipboard = clipboard::summary(
+                        review_diff.base(),
+                        review_diff.title(),
+                        submission.review_url(),
+                    );
+                    match clipboard::copy(&clipboard) {
+                        Ok(()) => println!("Clipboard: {clipboard}"),
+                        Err(error) => eprintln!("clipboard failed: {error}"),
+                    }
+                    if submission.was_created()
+                        && let Err(error) = repository
+                            .attach_review(submission.review_url(), submission.reviewers())
+                    {
+                        eprintln!(
+                            "diff failed: review {} was created, but Git association failed: {error}",
+                            submission.review_id()
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                    let action = if submission.was_created() {
+                        "created"
+                    } else {
+                        "updated"
+                    };
+                    log.time("post-hooks", || {
+                        hooks::run_post(
+                            &repository,
+                            "post-diff",
+                            &serde_json::json!({
+                                "event": "post-diff",
+                                "command": "diff",
+                                "action": action,
+                                "review_id": submission.review_id(),
+                                "url": submission.review_url(),
+                            }),
+                        );
+                    });
+                    log.finish(format!("ok {} {action}", submission.review_id()));
                 }
+                Ok(None) => log.finish("ok"),
                 Err(error) => {
                     eprintln!("diff failed: {error}");
                     return ExitCode::FAILURE;
                 }
             }
-            ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("diff failed: {error}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
     }
+    if !log.finished() {
+        log.finish("ok");
+    }
+    ExitCode::SUCCESS
 }
 
 fn print_diff_plan(review_diff: &git_repository::ReviewDiff, force: bool) -> Result<(), ExitCode> {
@@ -622,8 +656,9 @@ fn confirm_yes(prompt: &str) -> bool {
 }
 
 fn status(review_ids: &[String]) -> ExitCode {
+    let mut log = crate::log::CommandLog::start("status");
     let ids = if review_ids.is_empty() {
-        match review_id_or_head(None, "status") {
+        match log.time("git", || review_id_or_head(None, "status")) {
             Ok(review_id) => vec![review_id],
             Err(code) => return code,
         }
@@ -635,8 +670,8 @@ fn status(review_ids: &[String]) -> ExitCode {
         Err(error) => return review_failed("status", error),
     };
     let mut reviews = Vec::new();
-    for review_id in ids {
-        match crucible::review_status(&config, &review_id) {
+    for review_id in &ids {
+        match log.time("crucible", || crucible::review_status(&config, review_id)) {
             Ok(review) => reviews.push(review),
             Err(error) => return review_failed("status", error),
         }
@@ -644,6 +679,7 @@ fn status(review_ids: &[String]) -> ExitCode {
     let json =
         serde_json::to_string_pretty(&StatusReport { reviews }).expect("status json serialize");
     println!("{json}");
+    log.finish(format!("ok {}", ids.join(" ")));
     ExitCode::SUCCESS
 }
 
@@ -653,6 +689,7 @@ struct StatusReport {
 }
 
 fn copy(base: Option<&str>, jira: Option<&str>, branches: &[String]) -> ExitCode {
+    let mut log = crate::log::CommandLog::start("copy");
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => {
@@ -661,9 +698,9 @@ fn copy(base: Option<&str>, jira: Option<&str>, branches: &[String]) -> ExitCode
         }
     };
     if jira.is_some() || !branches.is_empty() {
-        return copy_batch(&repository, jira, branches);
+        return copy_batch(&repository, jira, branches, &mut log);
     }
-    let (base, title, url) = match repository.share_summary(base) {
+    let (base, title, url) = match log.time("git", || repository.share_summary(base)) {
         Ok(parts) => parts,
         Err(error) => {
             eprintln!("copy failed: {error}");
@@ -671,9 +708,10 @@ fn copy(base: Option<&str>, jira: Option<&str>, branches: &[String]) -> ExitCode
         }
     };
     let summary = clipboard::summary(&base, &title, &url);
-    match clipboard::copy(&summary) {
+    match log.time("clipboard", || clipboard::copy(&summary)) {
         Ok(()) => {
             println!("Clipboard: {summary}");
+            log.finish("ok");
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -687,10 +725,11 @@ fn copy_batch(
     repository: &git_repository::Repository,
     jira: Option<&str>,
     branches: &[String],
+    log: &mut crate::log::CommandLog,
 ) -> ExitCode {
     let shares = match jira {
-        Some(jira) => repository.review_shares(jira, branches),
-        None => repository.review_shares_at_refs(branches),
+        Some(jira) => log.time("git", || repository.review_shares(jira, branches)),
+        None => log.time("git", || repository.review_shares_at_refs(branches)),
     };
     let shares = match shares {
         Ok(shares) => shares,
@@ -705,8 +744,11 @@ fn copy_batch(
         .collect::<Vec<_>>()
         .join("\n");
     println!("{summary}");
-    match clipboard::copy(&summary) {
-        Ok(()) => ExitCode::SUCCESS,
+    match log.time("clipboard", || clipboard::copy(&summary)) {
+        Ok(()) => {
+            log.finish(format!("ok {} shares", shares.len()));
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("clipboard failed: {error}");
             ExitCode::FAILURE
@@ -723,80 +765,100 @@ fn completions(shell: clap_complete::Shell) -> ExitCode {
 fn comments_command(command: Option<CommentsCommand>) -> ExitCode {
     match command.unwrap_or(CommentsCommand::List { review_id: None }) {
         CommentsCommand::List { review_id } => {
-            comments(review_id.as_deref(), crucible::review_comments)
+            comments(review_id.as_deref(), crucible::review_comments, "list")
         }
         CommentsCommand::Reply {
             comment_id,
             message,
             review,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::reply_comment(review_id, &comment_id, &message)
-        }),
+        } => comments(
+            review.as_deref(),
+            |review_id| crucible::reply_comment(review_id, &comment_id, &message),
+            "reply",
+        ),
         CommentsCommand::Resolve {
             comment_ids,
             review,
             all,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::set_comment_resolutions(
-                review_id,
-                &comment_ids,
-                crucible::ResolutionStatus::Resolved,
-                all,
-            )
-        }),
+        } => comments(
+            review.as_deref(),
+            |review_id| {
+                crucible::set_comment_resolutions(
+                    review_id,
+                    &comment_ids,
+                    crucible::ResolutionStatus::Resolved,
+                    all,
+                )
+            },
+            "resolve",
+        ),
         CommentsCommand::Unresolve {
             comment_ids,
             review,
             all,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::set_comment_resolutions(
-                review_id,
-                &comment_ids,
-                crucible::ResolutionStatus::Unresolved,
-                all,
-            )
-        }),
-        CommentsCommand::Delete { comment_id, review } => {
-            comments(review.as_deref(), |review_id| {
-                crucible::delete_comment(review_id, &comment_id)
-            })
-        }
+        } => comments(
+            review.as_deref(),
+            |review_id| {
+                crucible::set_comment_resolutions(
+                    review_id,
+                    &comment_ids,
+                    crucible::ResolutionStatus::Unresolved,
+                    all,
+                )
+            },
+            "unresolve",
+        ),
+        CommentsCommand::Delete { comment_id, review } => comments(
+            review.as_deref(),
+            |review_id| crucible::delete_comment(review_id, &comment_id),
+            "delete",
+        ),
         CommentsCommand::Edit {
             comment_id,
             message,
             review,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::edit_comment(review_id, &comment_id, &message)
-        }),
+        } => comments(
+            review.as_deref(),
+            |review_id| crucible::edit_comment(review_id, &comment_id, &message),
+            "edit",
+        ),
         CommentsCommand::Defect {
             comment_ids,
             review,
             all,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::set_comment_defects(review_id, &comment_ids, true, all)
-        }),
+        } => comments(
+            review.as_deref(),
+            |review_id| crucible::set_comment_defects(review_id, &comment_ids, true, all),
+            "defect",
+        ),
         CommentsCommand::Undefect {
             comment_ids,
             review,
             all,
-        } => comments(review.as_deref(), |review_id| {
-            crucible::set_comment_defects(review_id, &comment_ids, false, all)
-        }),
+        } => comments(
+            review.as_deref(),
+            |review_id| crucible::set_comment_defects(review_id, &comment_ids, false, all),
+            "undefect",
+        ),
     }
 }
 
 fn patches_command(command: Option<PatchesCommand>) -> ExitCode {
     match command.unwrap_or(PatchesCommand::List { review_id: None }) {
-        PatchesCommand::List { review_id } => {
-            review_json(review_id.as_deref(), crucible::review_patches, "patches")
-        }
+        PatchesCommand::List { review_id } => review_json(
+            review_id.as_deref(),
+            crucible::review_patches,
+            "patches",
+            "list",
+        ),
         PatchesCommand::Delete { patch_ids, review } => review_json(
             review.as_deref(),
             |review_id| crucible::delete_patches(review_id, &patch_ids),
             "patches",
+            "delete",
         ),
         PatchesCommand::Prune { review } => {
-            review_json(review.as_deref(), crucible::prune_patches, "patches")
+            review_json(review.as_deref(), crucible::prune_patches, "patches", "prune")
         }
     }
 }
@@ -805,23 +867,34 @@ fn patches_command(command: Option<PatchesCommand>) -> ExitCode {
 fn comments<T: serde::Serialize>(
     review_id: Option<&str>,
     operation: impl FnOnce(&str) -> Result<T, crucible::CrucibleError>,
+    action: &str,
 ) -> ExitCode {
-    review_json(review_id, operation, "comments")
+    review_json(review_id, operation, "comments", action)
 }
 
 fn review_json<T: serde::Serialize>(
     review_id: Option<&str>,
     operation: impl FnOnce(&str) -> Result<T, crucible::CrucibleError>,
     what: &str,
+    action: &str,
 ) -> ExitCode {
-    let review_id = match review_id_or_head(review_id, what) {
-        Ok(review_id) => review_id,
-        Err(code) => return code,
+    let mut log = crate::log::CommandLog::start(format!("{what} {action}"));
+    let review_id = if review_id.is_some() {
+        match review_id_or_head(review_id, what) {
+            Ok(review_id) => review_id,
+            Err(code) => return code,
+        }
+    } else {
+        match log.time("git", || review_id_or_head(None, what)) {
+            Ok(review_id) => review_id,
+            Err(code) => return code,
+        }
     };
-    match operation(&review_id) {
+    match log.time("crucible", || operation(&review_id)) {
         Ok(result) => {
             let json = serde_json::to_string_pretty(&result).expect("review json serialize");
             println!("{json}");
+            log.finish(format!("ok {review_id}"));
             ExitCode::SUCCESS
         }
         Err(error) => review_failed(what, error),
@@ -845,6 +918,7 @@ fn review_failed(what: &str, error: impl std::fmt::Display) -> ExitCode {
 }
 
 fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
+    let mut log = crate::log::CommandLog::start("land");
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
         Err(error) => return land_failed(error),
@@ -871,7 +945,9 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         Ok(config) => config,
         Err(error) => return land_failed(error),
     };
-    let acceptance = match land_acceptance(&repository, &upstream, &config) {
+    let acceptance = match log.time("crucible_check", || {
+        land_acceptance(&repository, &upstream, &config)
+    }) {
         Ok(acceptance) => acceptance,
         Err(code) => return code,
     };
@@ -888,18 +964,20 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
             return land_failed(error);
         }
     }
-    if let Err(error) = hooks::run_pre(
-        &repository,
-        "pre-land",
-        &serde_json::json!({
-            "event": "pre-land",
-            "command": "land",
-            "review_id": acceptance.review_id,
-            "url": acceptance.review_url,
-            "branch": current,
-            "target": review_target,
-        }),
-    ) {
+    if let Err(error) = log.time("pre-hooks", || {
+        hooks::run_pre(
+            &repository,
+            "pre-land",
+            &serde_json::json!({
+                "event": "pre-land",
+                "command": "land",
+                "review_id": acceptance.review_id,
+                "url": acceptance.review_url,
+                "branch": current,
+                "target": review_target,
+            }),
+        )
+    }) {
         return land_failed(error);
     }
     if let Err(error) = repository.prepare_land_commit(
@@ -911,7 +989,7 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
     }
     let remote_branch = git_repository::land_ref_key(&upstream);
     println!("Rebasing onto {upstream}");
-    if let Err(error) = repository.pull_rebase_origin(remote_branch) {
+    if let Err(error) = log.time("rebase", || repository.pull_rebase_origin(remote_branch)) {
         return land_failed(error);
     }
     match repository.head_oneline() {
@@ -919,31 +997,37 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         Err(error) => return land_failed(error),
     }
     let prompt = format!("push branch '{current}' to '{upstream}'? [y/N] ");
-    if !yes && !confirm_yes(&prompt) {
+    if !yes && !log.time("wait", || confirm_yes(&prompt)) {
         println!("Aborted");
+        log.finish("aborted");
         return ExitCode::SUCCESS;
     }
-    if let Err(error) = repository.push_to_origin(&current, remote_branch) {
+    if let Err(error) = log.time("push", || repository.push_to_origin(&current, remote_branch)) {
         return land_failed(error);
     }
     println!("Pushed: {current} -> {upstream}");
-    if let Err(error) = crucible::close_review(&config, &acceptance.review_id, &acceptance.state) {
+    if let Err(error) = log.time("crucible_close", || {
+        crucible::close_review(&config, &acceptance.review_id, &acceptance.state)
+    }) {
         eprintln!("land failed: review was pushed, but closing failed: {error}");
         return ExitCode::FAILURE;
     }
     println!("Closed: {}", acceptance.review_id);
-    hooks::run_post(
-        &repository,
-        "post-land",
-        &serde_json::json!({
-            "event": "post-land",
-            "command": "land",
-            "review_id": acceptance.review_id,
-            "url": acceptance.review_url,
-            "branch": current,
-            "target": review_target,
-        }),
-    );
+    log.time("post-hooks", || {
+        hooks::run_post(
+            &repository,
+            "post-land",
+            &serde_json::json!({
+                "event": "post-land",
+                "command": "land",
+                "review_id": acceptance.review_id,
+                "url": acceptance.review_url,
+                "branch": current,
+                "target": review_target,
+            }),
+        );
+    });
+    log.finish(format!("ok {}", acceptance.review_id));
     ExitCode::SUCCESS
 }
 
@@ -1030,7 +1114,8 @@ fn attach_review(repository: &git_repository::Repository, review_id: &str) -> Ex
 }
 
 fn doctor() -> ExitCode {
-    let repository = match git_repository::Repository::discover() {
+    let mut log = crate::log::CommandLog::start("doctor");
+    let repository = match log.time("git", || git_repository::Repository::discover()) {
         Ok(repository) => repository,
         Err(error) => {
             eprintln!("{error}");
@@ -1038,5 +1123,6 @@ fn doctor() -> ExitCode {
         }
     };
     println!("Git repository: {}", repository.work_tree().display());
+    log.finish("ok");
     ExitCode::SUCCESS
 }
