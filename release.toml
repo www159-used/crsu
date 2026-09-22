@@ -1,5 +1,5 @@
 pre-release-commit-message = "chore: release {{version}}"
 tag-message = "Release {{version}}"
 tag-name = "v{{version}}"
-push = false
+push = true
 publish = false
