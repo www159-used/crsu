@@ -19,6 +19,12 @@ fn help_lists_the_initial_workflow_commands() {
     assert!(stdout.contains("copy"));
     assert!(stdout.contains("completions"));
     assert!(stdout.contains("land"));
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("complete ")),
+        "{stdout}"
+    );
     assert!(stdout.contains("comments"));
     assert!(stdout.contains("patches"));
     assert!(stdout.contains("-V"));
@@ -97,6 +103,81 @@ fn short_aliases_are_accepted() {
     let copy_help = String::from_utf8(copy.stdout).expect("UTF-8 copy help");
     assert!(copy_help.contains("-j"));
     assert!(copy_help.contains("-b"));
+}
+
+#[test]
+fn completions_print_dynamic_scripts() {
+    let output = crsu()
+        .args(["completions", "zsh"])
+        .output()
+        .expect("print zsh completion");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 zsh script");
+    assert!(stdout.contains("crsu complete"));
+    assert!(stdout.contains("review-ids"));
+    assert!(stdout.contains("#compdef crsu"));
+    assert!(stdout.contains("funcstack"));
+}
+
+#[test]
+fn completions_install_writes_named_script() {
+    let directory = tempfile::tempdir().expect("completion dir");
+    let output = crsu()
+        .args([
+            "completions",
+            "zsh",
+            "--install",
+            "--dir",
+            directory.path().to_str().expect("utf-8 path"),
+        ])
+        .output()
+        .expect("install zsh completion");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let path = directory.path().join("_crsu");
+    let script = std::fs::read_to_string(&path).expect("read installed script");
+    assert!(script.contains("#compdef crsu"));
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 install");
+    assert!(stdout.contains(&path.display().to_string()));
+}
+
+#[test]
+fn complete_lists_config_keys() {
+    let output = crsu()
+        .args(["complete", "config-keys"])
+        .output()
+        .expect("complete config keys");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 candidates");
+    assert!(stdout.contains("url"));
+    assert!(stdout.contains("project"));
+    assert!(stdout.contains("repository"));
+}
+
+#[test]
+fn complete_lists_local_branch_refs() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    git(repository.path(), &["init", "-b", "main", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "t@example.com"],
+    );
+    std::fs::write(repository.path().join("README"), "base\n").expect("write");
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "base", "-q"]);
+
+    let output = crsu()
+        .current_dir(repository.path())
+        .args(["complete", "refs"])
+        .output()
+        .expect("complete refs");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 refs");
+    assert!(stdout.contains("main"), "{stdout}");
 }
 
 #[test]

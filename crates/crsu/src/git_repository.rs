@@ -424,6 +424,46 @@ impl Repository {
     fn output_untrimmed<const N: usize>(&self, arguments: [&str; N]) -> Result<String, Error> {
         command_output_untrimmed(&self.work_tree, arguments)
     }
+
+    pub(crate) fn complete_refs(&self) -> Vec<String> {
+        self.git(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ])
+        .map(|text| {
+            lines(&text)
+                .into_iter()
+                .filter(|git_ref| !git_ref.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    pub(crate) fn complete_review_ids(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        if let Ok(id) = self.review_id_from_head() {
+            seen.insert(id.clone());
+            ids.push(id);
+        }
+        if let Ok(body) = self.git(&["log", "-n", "80", "--format=%B"]) {
+            for line in body.lines() {
+                if let Some(id) = review_id_from_message(line) {
+                    if seen.insert(id.clone()) {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    pub(crate) fn complete_log_text(&self) -> String {
+        self.git(&["log", "-n", "80", "--format=%s%n%b"])
+            .unwrap_or_default()
+    }
 }
 
 fn managed_commit_message(

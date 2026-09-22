@@ -83,6 +83,14 @@ cargo local-install
 
 默认装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。隔离目录把 `--root` 接在后面：
 
+补全脚本自己维护，按 Tab 时会再跑 `crsu complete` 拉分支、评审号、评论 id。zsh 用 `#compdef`，不要 `eval` / `source`：
+
+```bash
+crsu completions zsh --install
+crsu completions bash --install
+crsu completions fish --install
+```
+
 ```bash
 cargo local-install --root /path/to/install-root
 ```

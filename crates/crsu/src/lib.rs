@@ -1,7 +1,8 @@
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::process::ExitCode;
 
 mod clipboard;
+mod complete;
 mod crucible;
 mod git_repository;
 mod hooks;
@@ -166,11 +167,24 @@ enum Command {
         #[arg(short, long, value_delimiter = ',', num_args = 1.., conflicts_with = "base")]
         branches: Vec<String>,
     },
-    /// 生成 shell 补全脚本。
+    /// 打印 bash / zsh / fish 补全脚本；脚本会再调用 `crsu complete` 做动态候选。
     #[command(visible_alias = "comp")]
     Completions {
         /// 目标 shell。
-        shell: clap_complete::Shell,
+        shell: complete::Shell,
+        /// 写入该 shell 的常规补全目录，不要 source / eval。
+        #[arg(long)]
+        install: bool,
+        /// 覆盖安装目录（文件名仍按 shell 约定）。
+        #[arg(long, value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// 给补全脚本提供动态候选，一行一个；失败时输出为空。
+    #[command(hide = true)]
+    Complete {
+        kind: complete::Kind,
+        #[arg(default_value = "")]
+        prefix: String,
     },
     /// 将当前分支合入可选的目标分支。
     #[command(visible_alias = "ld")]
@@ -376,7 +390,18 @@ pub fn run(cli: Cli) -> ExitCode {
             jira,
             branches,
         } => copy(base.as_deref(), jira.as_deref(), &branches),
-        Command::Completions { shell } => completions(shell),
+        Command::Completions {
+            shell,
+            install,
+            dir,
+        } => {
+            if install {
+                complete::install(shell, dir.as_deref())
+            } else {
+                complete::script(shell)
+            }
+        }
+        Command::Complete { kind, prefix } => complete::candidates(kind, &prefix),
         Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
         Command::Comments { command } => comments_command(command),
         Command::Patches { command } => patches_command(command),
@@ -773,12 +798,6 @@ fn copy_batch(
             ExitCode::FAILURE
         }
     }
-}
-
-fn completions(shell: clap_complete::Shell) -> ExitCode {
-    let mut command = Cli::command();
-    clap_complete::generate(shell, &mut command, "crsu", &mut std::io::stdout());
-    ExitCode::SUCCESS
 }
 
 fn comments_command(command: Option<CommentsCommand>) -> ExitCode {
