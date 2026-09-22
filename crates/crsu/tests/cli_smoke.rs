@@ -23,6 +23,12 @@ fn help_lists_the_initial_workflow_commands() {
     assert!(stdout.contains("patches"));
     assert!(stdout.contains("-V"));
     assert!(stdout.contains("--version"));
+    assert!(stdout.contains("[alias: st]"));
+    assert!(stdout.contains("[alias: cmt]"));
+    assert!(stdout.contains("[alias: pt]"));
+    assert!(stdout.contains("[alias: cfg]"));
+    assert!(stdout.contains("[alias: df]"));
+    assert!(stdout.contains("[alias: ld]"));
 }
 
 #[test]
@@ -46,6 +52,51 @@ fn diff_new_cannot_be_combined_with_attach() {
     assert!(stderr.contains("--new"));
     assert!(stderr.contains("--attach"));
     assert!(stderr.contains("cannot be used with"));
+}
+
+#[test]
+fn short_aliases_are_accepted() {
+    let status = crsu()
+        .args(["st", "--help"])
+        .output()
+        .expect("run crsu st --help");
+    assert!(status.status.success());
+    let status_help = String::from_utf8(status.stdout).expect("UTF-8 status help");
+    assert!(status_help.contains("REVIEW_IDS"));
+
+    let comments = crsu()
+        .args(["cmt", "ls", "--help"])
+        .output()
+        .expect("run crsu cmt ls --help");
+    assert!(comments.status.success());
+
+    let diff_alias = crsu()
+        .args(["df", "--help"])
+        .output()
+        .expect("run crsu df --help");
+    assert!(diff_alias.status.success());
+    let land_alias = crsu()
+        .args(["ld", "--help"])
+        .output()
+        .expect("run crsu ld --help");
+    assert!(land_alias.status.success());
+
+    let diff = crsu()
+        .args(["diff", "--help"])
+        .output()
+        .expect("run crsu diff --help");
+    let diff_help = String::from_utf8(diff.stdout).expect("UTF-8 diff help");
+    assert!(diff_help.contains("-a"));
+    assert!(diff_help.contains("-n"));
+    assert!(diff_help.contains("-f"));
+
+    let copy = crsu()
+        .args(["copy", "--help"])
+        .output()
+        .expect("run crsu copy --help");
+    let copy_help = String::from_utf8(copy.stdout).expect("UTF-8 copy help");
+    assert!(copy_help.contains("-j"));
+    assert!(copy_help.contains("-b"));
 }
 
 #[test]

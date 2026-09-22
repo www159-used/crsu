@@ -116,39 +116,43 @@ enum Command {
     /// 以交互式向导配置当前仓库。
     Init {
         /// 写入用户级配置目录的 `config.toml`，不写当前仓库。
-        #[arg(long)]
+        #[arg(short, long)]
         global: bool,
     },
     /// 查看或精确修改配置。
+    #[command(visible_alias = "cfg")]
     Config {
         /// 读写用户级配置目录，不需要当前仓库。
-        #[arg(long)]
+        #[arg(short, long)]
         global: bool,
         #[command(subcommand)]
         command: ConfigCommand,
     },
     /// 检查本地 Git 与评审工具环境。
+    #[command(visible_alias = "doc")]
     Doctor,
     /// 从 Crucible 读取评审状态，stdout 为稳定 JSON。
+    #[command(visible_alias = "st")]
     Status {
         /// Crucible review id；可重复。省略时从 HEAD 的 `Url:` 读取。
         review_ids: Vec<String>,
     },
     /// 基于可选的基线分支创建或更新评审。
+    #[command(visible_alias = "df")]
     Diff {
         /// 作为比较基线的 Git ref；默认使用当前 upstream。
         base: Option<String>,
         /// 将当前 HEAD 关联到已经存在的 Crucible review。
-        #[arg(long, value_name = "REVIEW_ID", conflicts_with = "base")]
+        #[arg(short, long, value_name = "REVIEW_ID", conflicts_with = "base")]
         attach: Option<String>,
         /// 忽略 HEAD 中的旧 Url，新建评审并替换关联；适用于 cherry-pick 后出评审。
-        #[arg(long, conflicts_with = "attach")]
+        #[arg(short, long, conflicts_with = "attach")]
         new: bool,
         /// 跳过提交 patch 前的确认提示。
         #[arg(short = 'y', long = "yes")]
         yes: bool,
         /// 允许提交超过 1000 行的 patch。
-        #[arg(long)]
+        #[arg(short, long)]
         force: bool,
     },
     /// 输出评审摘要：`[base] title url`。默认复制当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支。
@@ -156,18 +160,20 @@ enum Command {
         /// 作为合入目标显示的 Git ref；默认使用当前 upstream。
         base: Option<String>,
         /// 按 JIRA 编号收集各分支已出评审的摘要，只读 git，不 checkout。
-        #[arg(long, conflicts_with = "base")]
+        #[arg(short, long, conflicts_with = "base")]
         jira: Option<String>,
         /// 只看这些 ref；可与 `--jira` 合用。逗号分隔。
-        #[arg(long, value_delimiter = ',', num_args = 1.., conflicts_with = "base")]
+        #[arg(short, long, value_delimiter = ',', num_args = 1.., conflicts_with = "base")]
         branches: Vec<String>,
     },
     /// 生成 shell 补全脚本。
+    #[command(visible_alias = "comp")]
     Completions {
         /// 目标 shell。
         shell: clap_complete::Shell,
     },
     /// 将当前分支合入可选的目标分支。
+    #[command(visible_alias = "ld")]
     Land {
         /// 本地目标分支；默认使用当前分支（首版仅支持同分支 push）。
         target: Option<String>,
@@ -175,15 +181,17 @@ enum Command {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
         /// 允许推到与 review 记录目标不一致的分支。
-        #[arg(long)]
+        #[arg(short, long)]
         force: bool,
     },
     /// 读取或修改评审评论。
+    #[command(visible_alias = "cmt")]
     Comments {
         #[command(subcommand)]
         command: Option<CommentsCommand>,
     },
     /// 列出或删除评审上的过往 patch。
+    #[command(visible_alias = "pt")]
     Patches {
         #[command(subcommand)]
         command: Option<PatchesCommand>,
@@ -193,6 +201,7 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum CommentsCommand {
     /// 以稳定 JSON 输出评审评论。
+    #[command(visible_alias = "ls")]
     List {
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
         review_id: Option<String>,
@@ -205,7 +214,7 @@ enum CommentsCommand {
         #[arg(short, long)]
         message: String,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
     },
     /// 将评论标为已解决。
@@ -214,10 +223,10 @@ enum CommentsCommand {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
         /// 该 review 下全部顶层评论。
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
     /// 删除一条自己的评论或回复。
@@ -226,7 +235,7 @@ enum CommentsCommand {
         /// 评论 id，例如 `CMT:39844`。
         comment_id: String,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
     },
     /// 改写一条自己的评论或回复。
@@ -238,7 +247,7 @@ enum CommentsCommand {
         #[arg(short, long)]
         message: String,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
     },
     /// 将评论标为缺陷。
@@ -247,10 +256,10 @@ enum CommentsCommand {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
         /// 该 review 下全部顶层评论。
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
     /// 取消评论上的缺陷标记。
@@ -259,10 +268,10 @@ enum CommentsCommand {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
         /// 该 review 下全部顶层评论。
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
     /// 将评论标为待解决（Needs resolution）。
@@ -271,10 +280,10 @@ enum CommentsCommand {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
         /// 该 review 下全部顶层评论。
-        #[arg(long)]
+        #[arg(short, long)]
         all: bool,
     },
 }
@@ -282,6 +291,7 @@ enum CommentsCommand {
 #[derive(Debug, Subcommand)]
 enum PatchesCommand {
     /// 以稳定 JSON 输出评审上的 patch。
+    #[command(visible_alias = "ls")]
     List {
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
         review_id: Option<String>,
@@ -291,13 +301,13 @@ enum PatchesCommand {
         /// patch id，例如 `37473` 或 `PATCH:37473`；可重复。
         patch_ids: Vec<String>,
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
     },
     /// 只留最新一块，其余能删的删掉。
     Prune {
         /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
-        #[arg(long, value_name = "REVIEW_ID")]
+        #[arg(short, long, value_name = "REVIEW_ID")]
         review: Option<String>,
     },
 }
