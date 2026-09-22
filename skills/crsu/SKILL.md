@@ -38,6 +38,8 @@ description: >-
 
 HEAD 里的 `Url:` 指向未关闭的评审时追加 patch；评审已关闭或已放弃则新建，并改写 `Url:`。
 
+cherry-pick 带来了其他分支的评审链接，即使旧评审还开着，也用 `crsu diff --new origin/<目标分支> -y` 显式新建。`--new` 忽略旧 `Url:`，成功创建后才替换 HEAD 的关联，不更新或关闭旧评审；不能与 `--attach` 同用。
+
 成功后看 stdout 的 Review 行，以及 HEAD 提交里的 `Url:`。当前 HEAD 摘要用 `crsu copy`。同一 JIRA 铺了多条分支时用 `crsu copy --jira TIC-xxxx`，只读各提交的 `Url:`；有 `[ target: ]` 用它，没有就用分支名（存在 `origin/<branch>` 则写成 `origin/<branch>`）。不要 checkout 或 fetch。stdout 和剪贴板都是那几行摘要。V22 不要走 `--jira`。
 
 ## 状态

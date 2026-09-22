@@ -272,6 +272,8 @@ pub struct Expectation {
     pub head_subject: Option<String>,
     #[serde(default)]
     pub head_body_contains: Vec<String>,
+    #[serde(default)]
+    pub head_body_not_contains: Vec<String>,
     pub review: Option<ExpectedReview>,
     /// JSON written by a hook script to `.git/crsu/hooks/captured.json`.
     #[serde(default)]

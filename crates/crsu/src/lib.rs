@@ -141,6 +141,9 @@ enum Command {
         /// 将当前 HEAD 关联到已经存在的 Crucible review。
         #[arg(long, value_name = "REVIEW_ID", conflicts_with = "base")]
         attach: Option<String>,
+        /// 忽略 HEAD 中的旧 Url，新建评审并替换关联；适用于 cherry-pick 后出评审。
+        #[arg(long, conflicts_with = "attach")]
+        new: bool,
         /// 跳过提交 patch 前的确认提示。
         #[arg(short = 'y', long = "yes")]
         yes: bool,
@@ -354,9 +357,10 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Diff {
             base,
             attach,
+            new,
             yes,
             force,
-        } => diff(base.as_deref(), attach.as_deref(), yes, force),
+        } => diff(base.as_deref(), attach.as_deref(), new, yes, force),
         Command::Copy {
             base,
             jira,
@@ -510,7 +514,7 @@ fn load_editable_config(
     }
 }
 
-fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> ExitCode {
+fn diff(base: Option<&str>, attach: Option<&str>, new: bool, yes: bool, force: bool) -> ExitCode {
     let mut log = crate::log::CommandLog::start("diff");
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
@@ -532,6 +536,11 @@ fn diff(base: Option<&str>, attach: Option<&str>, yes: bool, force: bool) -> Exi
             eprintln!("diff failed: {error}");
             return ExitCode::FAILURE;
         }
+    };
+    let review_diff = if new {
+        review_diff.without_review()
+    } else {
+        review_diff
     };
     if let Err(code) = print_diff_plan(&review_diff, force) {
         return code;
@@ -857,9 +866,12 @@ fn patches_command(command: Option<PatchesCommand>) -> ExitCode {
             "patches",
             "delete",
         ),
-        PatchesCommand::Prune { review } => {
-            review_json(review.as_deref(), crucible::prune_patches, "patches", "prune")
-        }
+        PatchesCommand::Prune { review } => review_json(
+            review.as_deref(),
+            crucible::prune_patches,
+            "patches",
+            "prune",
+        ),
     }
 }
 
@@ -1002,7 +1014,9 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         log.finish("aborted");
         return ExitCode::SUCCESS;
     }
-    if let Err(error) = log.time("push", || repository.push_to_origin(&current, remote_branch)) {
+    if let Err(error) = log.time("push", || {
+        repository.push_to_origin(&current, remote_branch)
+    }) {
         return land_failed(error);
     }
     println!("Pushed: {current} -> {upstream}");

@@ -35,6 +35,20 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
+fn diff_new_cannot_be_combined_with_attach() {
+    let output = crsu()
+        .args(["diff", "--new", "--attach", "COMMON-123"])
+        .output()
+        .expect("reject conflicting review actions");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 error");
+    assert!(stderr.contains("--new"));
+    assert!(stderr.contains("--attach"));
+    assert!(stderr.contains("cannot be used with"));
+}
+
+#[test]
 fn comments_help_lists_reply_and_resolution_commands() {
     let output = crsu()
         .args(["comments", "--help"])

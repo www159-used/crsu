@@ -496,6 +496,13 @@ fn normalized_git_location(value: &str) -> Option<String> {
 }
 
 impl ReviewDiff {
+    /// Treats the diff as a new review without modifying HEAD before submission.
+    #[must_use]
+    pub(crate) fn without_review(mut self) -> Self {
+        self.review_id = None;
+        self
+    }
+
     #[must_use]
     pub fn base(&self) -> &str {
         &self.base

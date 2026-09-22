@@ -1,0 +1,60 @@
+name: new ignores an open review inherited by cherry-pick
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: maintenance
+  feature_files:
+    README.md: "backported change\n"
+  feature_message: |-
+    fix: backport a reviewed change
+
+    Summary: Bring the fix to the maintenance branch.
+
+    Reviewers: original-reviewer
+
+    Reviewed By: original-reviewer
+
+    Url: http://crucible/cru/COMMON-123
+command: [diff, --new, --yes, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  reviewers: [alice]
+  review_id: COMMON-200
+  previous_review_id: COMMON-123
+  previous_state: Review
+hooks:
+  pre-diff: |-
+    #!/bin/sh
+    cat > .git/crsu/hooks/captured.json
+expect:
+  success: true
+  stdout_contains:
+    - "Review: COMMON-200"
+  head_subject: "fix: backport a reviewed change"
+  head_body_contains:
+    - "Summary: Bring the fix to the maintenance branch."
+    - "Reviewers: alice"
+    - "/cru/COMMON-200"
+  head_body_not_contains:
+    - "/cru/COMMON-123"
+    - "original-reviewer"
+  hook_json:
+    version: 1
+    scope: project
+    event: pre-diff
+    command: diff
+    base: main
+    title: "fix: backport a reviewed change"
+    review_id: null
+  review:
+    title: "fix: backport a reviewed change"
+    objectives: |-
+      Bring the fix to the maintenance branch.
+
+      [ branch: maintenance ]
+      [ target: main ]
+      [ last_tag: None ]
+    state: Review

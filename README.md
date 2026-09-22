@@ -15,6 +15,7 @@ crsu doctor
 crsu status
 crsu status LP-1476 LP-1478
 crsu diff [base]
+crsu diff --new [base]
 crsu copy [base]
 crsu copy --jira TIC-xxxx
 crsu land [target]
@@ -43,6 +44,7 @@ crsu patches prune
 - `config`：读写项目配置；`--global` 读写用户级目录（Linux `~/.config/crsu`，macOS `~/Library/Application Support/crsu`，Windows `%APPDATA%\crsu`；可用 `CRSU_CONFIG_HOME` 覆盖），不需要当前仓库。`repository` 只能写在项目里。
 - `diff`：基于可选基线生成 patch；优先读取环境变量，其次项目配置，再其次全局配置
   创建 Crucible review。HEAD 里已有未关闭的评审则追加 patch；已关闭或已放弃则新建。
+  cherry-pick 带来了其他分支仍在进行的评审 `Url:` 时，用 `crsu diff --new origin/<目标分支> -y`：忽略旧关联，新建评审，成功后替换 HEAD 的 `Url:`，旧评审保持不变。`--new` 不能与 `--attach` 同用。
   摘要打印文件数和变更行数（`+`/`-`，不含文件头）；超过 1000 行拒绝提交，`--force` 才能越过。
 - `copy`：输出 `[target] title url` 并写入剪贴板。默认当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支，只读、不 checkout。没有 `[ target: ]` 时用分支名。
 - `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。评审已关闭或已放弃直接拒绝，不 rebase、不 push。

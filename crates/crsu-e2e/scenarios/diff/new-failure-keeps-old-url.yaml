@@ -1,0 +1,27 @@
+name: failed new review leaves the inherited URL unchanged
+repository:
+  base_branch: main
+  base_files:
+    README.md: "base\n"
+  feature_branch: maintenance
+  feature_files:
+    README.md: "backported change\n"
+  feature_message: |-
+    fix: backport a reviewed change
+
+    Url: http://crucible/cru/COMMON-123
+command: [diff, --new, --yes, main]
+crucible:
+  project: COMMON
+  repository: java-common
+  token: test-token
+  response:
+    status: 403
+    body: permission denied
+expect:
+  success: false
+  stderr_contains:
+    - "403"
+  head_subject: "fix: backport a reviewed change"
+  head_body_contains:
+    - "Url: http://crucible/cru/COMMON-123"

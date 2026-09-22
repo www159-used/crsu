@@ -58,7 +58,8 @@ pub fn render_text_insert(
     app.enter_insert();
     use ratatui::{Terminal, backend::TestBackend};
 
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create test terminal");
+    let mut terminal =
+        Terminal::new(TestBackend::new(width, height)).expect("create test terminal");
     terminal
         .draw(|frame| app.render(frame))
         .expect("render test frame");
@@ -1119,11 +1120,7 @@ fn apply_insert_cursor_style(show: bool) -> Result<(), String> {
 }
 
 fn restore_cursor_style() {
-    let _ = execute!(
-        stdout(),
-        DisableBlinking,
-        SetCursorStyle::DefaultUserShape
-    );
+    let _ = execute!(stdout(), DisableBlinking, SetCursorStyle::DefaultUserShape);
 }
 
 fn caret_on_line(inner: Rect, line: u16, cols: usize) -> Position {

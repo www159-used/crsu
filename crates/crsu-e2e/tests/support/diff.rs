@@ -34,6 +34,13 @@ fn run_scenario(scenario: &Scenario) {
     }
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
     assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
+    for unexpected in &scenario.expect.head_body_not_contains {
+        assert!(
+            !body.contains(unexpected),
+            "scenario '{}' HEAD body must not contain '{unexpected}': {body}",
+            scenario.name
+        );
+    }
     if let Some(crucible) = &scenario.crucible {
         assert_no_token_leak(&scenario.name, &output, &crucible.token);
     }
