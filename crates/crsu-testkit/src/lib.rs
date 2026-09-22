@@ -110,6 +110,9 @@ pub struct CommentsResolutionExpectation {
     pub status: String,
     #[serde(default)]
     pub form_contains: Vec<(String, String)>,
+    /// First RESOLVED POST fails like live Crucible when the comment has no resolution yet.
+    #[serde(default)]
+    pub from_null: bool,
 }
 
 /// Expected DELETE when an e2e scenario removes a comment.
@@ -187,6 +190,7 @@ struct Shared {
     review: Mutex<Option<ReviewSnapshot>>,
     interactions: Mutex<Vec<Interaction>>,
     errors: Mutex<Vec<String>>,
+    resolution_posts: Mutex<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -265,6 +269,7 @@ impl MockCrucible {
             review: Mutex::new(review),
             interactions: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
+            resolution_posts: Mutex::new(0),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let thread_shared = Arc::clone(&shared);
@@ -393,6 +398,15 @@ fn assert_comments_script(fixture: &CommentsFixture, interactions: &[Interaction
         return;
     }
     if let Some(resolution) = &fixture.resolution {
+        let path = format!("/json/cru/{}/{}/", fixture.review_id, resolution.endpoint);
+        if resolution.from_null {
+            assert_recorded(
+                interactions,
+                "POST",
+                &path,
+                &["resolutionStatus=UNRESOLVED", &format!("commentId={}", resolution.comment_id)],
+            );
+        }
         let mut needles = vec![
             format!("resolutionStatus={}", resolution.status),
             format!("commentId={}", resolution.comment_id),
@@ -404,12 +418,7 @@ fn assert_comments_script(fixture: &CommentsFixture, interactions: &[Interaction
                 .map(|(key, value)| format!("{key}={value}")),
         );
         let refs: Vec<&str> = needles.iter().map(String::as_str).collect();
-        assert_recorded(
-            interactions,
-            "POST",
-            &format!("/json/cru/{}/{}/", fixture.review_id, resolution.endpoint),
-            &refs,
-        );
+        assert_recorded(interactions, "POST", &path, &refs);
         return;
     }
     if let Some(delete) = &fixture.delete {
@@ -505,7 +514,9 @@ fn handle_request(mut request: tiny_http::Request, shared: &Shared) -> Result<()
         Script::Review(fixture) => handle_review(fixture, &shared.review, &method, &path, &body)?,
         Script::Land(fixture) => handle_land(fixture, &method, &path),
         Script::Reviews(reviews) => handle_reviews(reviews, &method, &path),
-        Script::Comments(fixture) => handle_comments(fixture, &method, &path),
+        Script::Comments(fixture) => {
+            handle_comments(fixture, &method, &path, &body, &shared.resolution_posts)
+        }
         Script::Patches(fixture) => handle_patches(fixture, &method, &path),
     };
 
@@ -717,7 +728,13 @@ fn handle_land(fixture: &LandFixture, method: &str, path: &str) -> (u16, String)
     (404, format!("unhandled {method} {path}"))
 }
 
-fn handle_comments(fixture: &CommentsFixture, method: &str, path: &str) -> (u16, String) {
+fn handle_comments(
+    fixture: &CommentsFixture,
+    method: &str,
+    path: &str,
+    body: &str,
+    resolution_posts: &Mutex<usize>,
+) -> (u16, String) {
     let prefix = format!("/rest-service/reviews-v1/{}", fixture.review_id);
     if method == "GET" && path == format!("{prefix}/comments") {
         return (200, fixture.comments.to_string());
@@ -738,6 +755,23 @@ fn handle_comments(fixture: &CommentsFixture, method: &str, path: &str) -> (u16,
         && method == "POST"
         && path == format!("/json/cru/{}/{}/", fixture.review_id, resolution.endpoint)
     {
+        if resolution.from_null && body.contains("resolutionStatus=RESOLVED") {
+            let mut hits = resolution_posts.lock().expect("resolution posts");
+            *hits += 1;
+            if *hits == 1 {
+                return (
+                    500,
+                    serde_json::json!({
+                        "errorMessages": [
+                            "Performing illegal comment resolution transition from null to RESOLVED"
+                        ],
+                        "errorName": "java.lang.IllegalArgumentException",
+                        "worked": false
+                    })
+                    .to_string(),
+                );
+            }
+        }
         return (200, serde_json::json!({"worked": true}).to_string());
     }
     if let Some(delete) = &fixture.delete

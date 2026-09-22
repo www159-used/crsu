@@ -951,11 +951,7 @@ pub fn set_comment_resolutions(
     let targets = resolution_targets(&comments, comment_ids, all_top_level)?;
     let mut results = Vec::new();
     for target in targets {
-        post_resolution(
-            &config,
-            review_id,
-            &resolution_post(target.parent, target.comment, &target.id, status),
-        )?;
+        apply_resolution(&config, review_id, &target, status)?;
         results.push(CommentResolutionResult {
             comment_id: rest_comment_id(&target.id),
             status,
@@ -1221,6 +1217,41 @@ fn resolution_post(
     }
 }
 
+fn apply_resolution(
+    config: &Config,
+    review_id: &str,
+    target: &ResolutionTarget<'_>,
+    status: ResolutionStatus,
+) -> Result<(), CrucibleError> {
+    let post = resolution_post(target.parent, target.comment, &target.id, status);
+    match post_resolution(config, review_id, &post) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if status == ResolutionStatus::Resolved && is_null_to_resolved(&error) =>
+        {
+            post_resolution(
+                config,
+                review_id,
+                &resolution_post(
+                    target.parent,
+                    target.comment,
+                    &target.id,
+                    ResolutionStatus::Unresolved,
+                ),
+            )?;
+            post_resolution(config, review_id, &post)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_null_to_resolved(error: &CrucibleError) -> bool {
+    matches!(
+        error,
+        CrucibleError::HttpResponse { detail, .. } if detail.contains("from null to RESOLVED")
+    )
+}
+
 fn post_resolution(
     config: &Config,
     review_id: &str,
@@ -1252,11 +1283,22 @@ fn numeric_comment_id(comment_id: &str) -> String {
 }
 
 fn comment_perma_id(comment: &Value) -> String {
-    comment
-        .pointer("/permaId/id")
-        .and_then(Value::as_str)
+    json_text(comment.get("permaId"))
+        .or_else(|| json_text(comment.get("permId")))
         .unwrap_or_default()
-        .to_owned()
+}
+
+fn json_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) if !text.is_empty() => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Object(object) => match object.get("id") {
+            Some(Value::String(text)) if !text.is_empty() => Some(text.clone()),
+            Some(Value::Number(number)) => Some(number.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Reads whichever review-item id field Crucible returned for a comment.
@@ -1789,6 +1831,39 @@ mod tests {
         assert!(parsed.comments[1].defect);
         assert_eq!(parsed.comments[1].replies[0].message, "Done");
         assert_eq!(parsed.comments[1].created.as_deref(), Some("1700000000000"));
+    }
+
+    #[test]
+    fn reads_string_perma_id_from_comment_payload() {
+        let comments = serde_json::json!({
+            "comments": [
+                {
+                    "permaId": "CMT:2",
+                    "message": "Extract this helper",
+                    "user": {"userName": "bob"},
+                    "reviewItemId": {"id": "CFR-1"},
+                    "lineRanges": [{"range": "12-14"}]
+                }
+            ]
+        });
+        let items = serde_json::json!({
+            "reviewItem": [
+                {"permId": {"id": "CFR-1"}, "toPath": "src/lib.rs"}
+            ]
+        });
+        let parsed = super::parse_review_comments("COMMON-99", &comments, &items);
+        assert_eq!(parsed.comments[0].id, "CMT:2");
+        assert_eq!(parsed.comments[0].kind, super::CommentKind::Line);
+    }
+
+    #[test]
+    fn detects_illegal_null_to_resolved_transition() {
+        let error = super::CrucibleError::HttpResponse {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            detail: "{\"errorMessages\":[\"Performing illegal comment resolution transition from null to RESOLVED\"]}"
+                .to_owned(),
+        };
+        assert!(super::is_null_to_resolved(&error));
     }
 
     #[test]

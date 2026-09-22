@@ -77,7 +77,7 @@ _crsu() {
       ;;
     comments|cmt)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=($(compgen -W "list ls reply resolve delete rm edit update defect undefect unresolve" -- "${cur}"))
+        COMPREPLY=($(compgen -W "list ls reply resolve delete rm edit defect undefect unresolve" -- "${cur}"))
       else
         case "${prev}" in
           -r|--review)

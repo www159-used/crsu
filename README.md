@@ -49,7 +49,7 @@ crsu patches prune
 - `copy`：输出 `[target] title url` 并写入剪贴板。默认当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支，只读、不 checkout。没有 `[ target: ]` 时用分支名。
 - `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。评审已关闭或已放弃直接拒绝，不 rebase、不 push。
 - 命令 hook：可执行文件放在用户级 `hooks/` 和共享 git 目录的 `.git/crsu/hooks/`。两层都跑，不互相覆盖。`pre-*` 先全局后项目，非 0 退出则中止。`post-*` 先项目后全局，失败只警告，给外部做收尾（关 session、清 tab）。stdin 是一段 JSON（`version`、`scope`、`event`、`command`、`review_id`、`url` 等）。`version` 现为 `1`，字段改义或删除时才加一。
-- `comments`：从 Crucible 拉取或修改评审评论，stdout 输出稳定 JSON。省略 review id 时从 HEAD 的 `Url:` 读取。`reply` 回复一条评论；`edit` / `update` 改写自己的评论；`delete` / `rm` 删除自己的评论；`unresolve` / `needs-resolve` 标成 Needs resolution；`resolve` / `mark-resolved` 标成 Resolved；`defect` / `raise-defect` 标成缺陷；`undefect` / `clear-defect` 取消缺陷。Crucible 只允许改/删自己的评论。
+- `comments`：从 Crucible 拉取或修改评审评论，stdout 输出稳定 JSON。省略 review id 时从 HEAD 的 `Url:` 读取。`reply` 回复一条评论；`edit` 改写自己的评论；`delete` / `rm` 删除自己的评论；`unresolve` 标成 Needs resolution；`resolve` 标成 Resolved；`defect` 标成缺陷；`undefect` 取消缺陷。Crucible 只允许改/删自己的评论。
 - `patches`：列出或删除评审上的过往 patch（`-na` / `diff` 每次追加的全量）。`list` 只输出元数据；`delete` 删指定块；`prune` 只留最新。挂着未删行内评论的 patch 会跳过，不挡整次清理。`diff` 不会自动 prune。
 
 `diff` 已可创建/更新评审；`land` 已支持同分支合入。跨分支 merge 尚未实现。

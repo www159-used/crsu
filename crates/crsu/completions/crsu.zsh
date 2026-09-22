@@ -3,7 +3,22 @@
 _crsu_values() {
   local -a values
   values=(${(f)"$(_call_program crsu-complete crsu complete "$1" 2>/dev/null)"})
-  (( ${#values} )) && _describe -t "$1" "$1" values
+  # CMT:40254 不能走 _describe：冒号会被切成「值:说明」，Tab 只留下 CMT。
+  (( ${#values} )) && compadd -Q -a values
+}
+
+# 空词时不要走 _arguments，否则会先补成 `-`，动态 id 出不来。
+_crsu_after_option() {
+  case $words[CURRENT-1] in
+    -r|--review)
+      _crsu_values review-ids
+      return 0
+      ;;
+    -m|--message)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 _crsu() {
@@ -119,40 +134,25 @@ _crsu_config() {
 
 _crsu_comments() {
   if (( CURRENT == 2 )); then
-    _values 'comments' list ls reply resolve delete rm edit update defect undefect unresolve
+    _values 'comments' list ls reply resolve delete rm edit defect undefect unresolve
+    return
+  fi
+  _crsu_after_option && return
+  if [[ $words[CURRENT] == -* ]]; then
+    _arguments \
+      '(-m --message)'{-m,--message}'[message]' \
+      '(-r --review)'{-r,--review}'[review]' \
+      '(-a --all)'{-a,--all}'[all top-level comments]' \
+      '(-h --help)'{-h,--help}
     return
   fi
   case $words[2] in
     list|ls)
       _crsu_values review-ids
       ;;
-    reply)
-      _arguments \
-        '(-m --message)'{-m,--message}'[message]:message:' \
-        '(-r --review)'{-r,--review}'[review]:review:->reviews' \
-        '1:comment:->comments'
+    reply|edit|delete|rm|resolve|unresolve|defect|undefect)
+      _crsu_values comment-ids
       ;;
-    edit|update)
-      _arguments \
-        '(-m --message)'{-m,--message}'[message]:message:' \
-        '(-r --review)'{-r,--review}'[review]:review:->reviews' \
-        '1:comment:->comments'
-      ;;
-    delete|rm)
-      _arguments \
-        '(-r --review)'{-r,--review}'[review]:review:->reviews' \
-        '1:comment:->comments'
-      ;;
-    resolve|unresolve|defect|undefect|mark-resolved|needs-resolve|raise-defect|clear-defect)
-      _arguments \
-        '(-r --review)'{-r,--review}'[review]:review:->reviews' \
-        '(-a --all)'{-a,--all}'[all top-level comments]' \
-        '*:comment:->comments'
-      ;;
-  esac
-  case $state in
-    reviews) _crsu_values review-ids ;;
-    comments) _crsu_values comment-ids ;;
   esac
 }
 

@@ -42,12 +42,12 @@ complete -c crsu -n '__fish_seen_subcommand_from land ld' -s y -l yes
 complete -c crsu -n '__fish_seen_subcommand_from land ld' -s f -l force
 complete -c crsu -n '__fish_seen_subcommand_from land ld' -a '(__crsu_complete refs)'
 
-complete -c crsu -n '__fish_seen_subcommand_from comments cmt; and __fish_is_nth_token 2' -a 'list ls reply resolve delete rm edit update defect undefect unresolve'
+complete -c crsu -n '__fish_seen_subcommand_from comments cmt; and __fish_is_nth_token 2' -a 'list ls reply resolve delete rm edit defect undefect unresolve'
 complete -c crsu -n '__fish_seen_subcommand_from comments cmt' -s r -l review -xa '(__crsu_complete review-ids)'
 complete -c crsu -n '__fish_seen_subcommand_from comments cmt' -s m -l message
 complete -c crsu -n '__fish_seen_subcommand_from comments cmt' -s a -l all
 complete -c crsu -n '__fish_seen_subcommand_from comments cmt; and __fish_seen_subcommand_from list ls' -a '(__crsu_complete review-ids)'
-complete -c crsu -n '__fish_seen_subcommand_from comments cmt; and __fish_seen_subcommand_from reply resolve delete rm edit update defect undefect unresolve' -a '(__crsu_complete comment-ids)'
+complete -c crsu -n '__fish_seen_subcommand_from comments cmt; and __fish_seen_subcommand_from reply resolve delete rm edit defect undefect unresolve' -a '(__crsu_complete comment-ids)'
 
 complete -c crsu -n '__fish_seen_subcommand_from patches pt; and __fish_is_nth_token 2' -a 'list ls delete prune'
 complete -c crsu -n '__fish_seen_subcommand_from patches pt' -s r -l review -xa '(__crsu_complete review-ids)'

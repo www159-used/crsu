@@ -12,7 +12,7 @@ description: >-
 # crsu
 
 当前仓库里走 Git + Crucible 评审时用 `crsu`。
-命令细节以 `crsu --help` / `crsu config --help` / `crsu status --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。
+命令细节以 `crsu --help` / `crsu config --help` / `crsu status --help` / `crsu comments --help` / `crsu patches --help` 为准，不要凭记忆补旗标。短名以 help 里的 `[alias:]` 为准，常用：`st`、`cmt`、`df`、`ld`、`ls`、`rm`。
 
 连接信息：环境变量 > `.git/crsu/config.toml` > 用户级 `config.toml`（`directories`；可用 `CRSU_CONFIG_HOME` 覆盖）。跨仓库共用的 url/token/project 用 `crsu init --global` 或 `crsu config --global set`。FishEye 锚点只写项目配置。
 
@@ -65,7 +65,7 @@ crsu comments                  # 默认从 HEAD 的 Url: 读 review id
 crsu comments list REVIEW_ID
 ```
 
-顶层字段是 `review_id` 和 `comments`。每条评论认这些键：`id`、`kind`（`general` / `line`）、`author`、`message`、`draft`、`deleted`、`defect`、`path`、`line`、`created`、`replies`。行内评论才有 `path` / `line`。id 用 `CMT:39844` 这种形式。
+顶层字段是 `review_id` 和 `comments`。每条评论认这些键：`id`、`kind`（`general` / `line`）、`author`、`message`、`draft`、`deleted`、`defect`、`path`、`line`、`created`、`replies`。行内评论才有 `path` / `line`。`id` 是 `CMT:39844` 这种整段，不要拆开。
 
 回复、改、删、标状态：
 
@@ -78,6 +78,8 @@ crsu comments resolve CMT:1
 crsu comments defect CMT:1
 crsu comments undefect CMT:1
 ```
+
+`unresolve` 标成 Needs resolution。`resolve` 标成 Resolved；评论还没有 resolution 时 Crucible 不接受直接 RESOLVED，`resolve` 会先标待解决再标已解决。不要自己先 `unresolve` 再 `resolve`。
 
 只能改或删自己的评论。省略 review id 时同样从 HEAD 的 `Url:` 读。写完再 `list` 一次，以新的 JSON 为准。
 

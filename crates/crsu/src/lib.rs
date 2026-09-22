@@ -232,7 +232,6 @@ enum CommentsCommand {
         review: Option<String>,
     },
     /// 将评论标为已解决。
-    #[command(visible_alias = "mark-resolved")]
     Resolve {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
@@ -253,7 +252,6 @@ enum CommentsCommand {
         review: Option<String>,
     },
     /// 改写一条自己的评论或回复。
-    #[command(visible_alias = "update")]
     Edit {
         /// 评论 id，例如 `CMT:39844`。
         comment_id: String,
@@ -265,7 +263,6 @@ enum CommentsCommand {
         review: Option<String>,
     },
     /// 将评论标为缺陷。
-    #[command(visible_alias = "raise-defect")]
     Defect {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
@@ -277,7 +274,6 @@ enum CommentsCommand {
         all: bool,
     },
     /// 取消评论上的缺陷标记。
-    #[command(visible_alias = "clear-defect")]
     Undefect {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,
@@ -289,7 +285,6 @@ enum CommentsCommand {
         all: bool,
     },
     /// 将评论标为待解决（Needs resolution）。
-    #[command(visible_alias = "needs-resolve")]
     Unresolve {
         /// 评论 id；可重复。与 `--all` 一起时忽略。
         comment_ids: Vec<String>,

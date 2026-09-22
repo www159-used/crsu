@@ -1,0 +1,32 @@
+name: comments resolve first marks needs resolution when Crucible has none
+command: [comments, resolve, "CMT:2", "--review", COMMON-99]
+crucible:
+  project: COMMON
+  token: test-token
+  review_id: COMMON-99
+  comments:
+    comments:
+      - permaId: "CMT:2"
+        message: Extract this helper
+        reviewItemId:
+          id: CFR-1
+        toLineRange: "12-14"
+        user:
+          userName: bob
+  review_items:
+    reviewItem: []
+  resolution:
+    endpoint: revisionCommentResolutionAjax
+    comment_id: "2"
+    status: RESOLVED
+    from_null: true
+    form_contains:
+      - [type, inline]
+      - [frxId, "1"]
+      - [toLineRange, "12-14"]
+expect:
+  success: true
+  stdout_contains:
+    - '"review_id": "COMMON-99"'
+    - '"comment_id": "CMT:2"'
+    - '"status": "resolved"'
