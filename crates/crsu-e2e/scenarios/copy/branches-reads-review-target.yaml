@@ -1,0 +1,18 @@
+name: copy --branches reads the review target when the commit has none
+repository:
+  reviews:
+    - branch: fix/oem/ingest-parser-rule-page
+      title: "[TIC-10690] fix: syslog"
+      url: http://crucible/cru/COMMON-99
+crucible:
+  reviews:
+    - review_id: COMMON-99
+      title: "[TIC-10690] fix: syslog"
+      objectives: |-
+        [ branch: fix/oem/ingest-parser-rule-page ]
+        [ target: master-hw ]
+command: [copy, --branches, fix/oem/ingest-parser-rule-page]
+expect:
+  success: true
+  stdout_contains:
+    - "[master-hw] [TIC-10690] fix: syslog http://crucible/cru/COMMON-99"

@@ -401,6 +401,13 @@ pub fn inspect_review(config: &Config, review_id: &str) -> Result<LandReview, Cr
     })
 }
 
+/// Reads `[ target: ]` from a review description. Used by `copy` when git fallback still looks like a feature branch.
+pub(crate) fn review_copy_target(config: &Config, review_id: &str) -> Option<String> {
+    let review = get_json(config, &format!("rest-service/reviews-v1/{review_id}")).ok()?;
+    let objectives = review.get("description").and_then(Value::as_str)?;
+    crate::git_repository::target_from_objectives(objectives).map(str::to_owned)
+}
+
 /// Fetches one review and its reviewers from Crucible.
 pub fn review_status(config: &Config, review_id: &str) -> Result<ReviewStatus, CrucibleError> {
     let review = get_json(config, &format!("rest-service/reviews-v1/{review_id}"))?;

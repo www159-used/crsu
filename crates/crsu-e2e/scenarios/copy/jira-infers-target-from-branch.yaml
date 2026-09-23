@@ -1,4 +1,4 @@
-name: copy --jira infers target from the branch when the commit has no target line
+name: copy --jira infers target from the branch name
 repository:
   reviews:
     - branch: "4.6"

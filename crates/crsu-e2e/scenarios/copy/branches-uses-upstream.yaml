@@ -1,0 +1,13 @@
+name: copy --branches uses the branch upstream
+repository:
+  track_origin: true
+  reviews:
+    - branch: fix/master/api
+      title: "fix: verify logtype"
+      upstream: origin/main
+      url: http://crucible/cru/COMMON-99
+command: [copy, --branches, fix/master/api]
+expect:
+  success: true
+  stdout_contains:
+    - "[origin/main] fix: verify logtype http://crucible/cru/COMMON-99"

@@ -160,7 +160,7 @@ impl Repository {
                 continue;
             };
             let message = self.commit_message(&hash)?;
-            let fallback = self.display_target(&git_ref);
+            let fallback = self.share_fallback_target(&git_ref);
             let Some(share) = share_from_message(&message, &fallback) else {
                 continue;
             };
@@ -189,7 +189,7 @@ impl Repository {
         let mut shares = Vec::new();
         for git_ref in refs {
             let message = self.commit_message(git_ref)?;
-            let fallback = self.display_target(git_ref);
+            let fallback = self.share_fallback_target(git_ref);
             if let Some(share) = share_from_message(&message, &fallback) {
                 shares.push(share);
             }
@@ -223,8 +223,17 @@ impl Repository {
             .collect())
     }
 
-    fn display_target(&self, git_ref: &str) -> String {
-        let name = land_ref_key(git_ref);
+    fn share_fallback_target(&self, git_ref: &str) -> String {
+        let branch = land_ref_key(git_ref);
+        if let Ok(upstream) = self.upstream_of(branch) {
+            return upstream;
+        }
+        self.prefer_origin_remote(git_ref)
+    }
+
+    /// `master-hw` → `origin/master-hw` when that remote-tracking ref exists.
+    pub(crate) fn prefer_origin_remote(&self, target: &str) -> String {
+        let name = land_ref_key(target);
         let origin = format!("origin/{name}");
         if self
             .git(&["rev-parse", "--verify", &format!("{origin}^{{commit}}")])
@@ -232,7 +241,7 @@ impl Repository {
         {
             origin
         } else {
-            git_ref.to_owned()
+            target.to_owned()
         }
     }
 
@@ -601,9 +610,7 @@ fn share_from_message(message: &str, fallback_target: &str) -> Option<ReviewShar
         return None;
     }
     Some(ReviewShare {
-        target: target_from_objectives(message)
-            .unwrap_or(fallback_target)
-            .to_owned(),
+        target: fallback_target.to_owned(),
         title: title.to_owned(),
         url,
     })
@@ -642,8 +649,11 @@ pub(crate) fn review_url_from_message(message: &str) -> Option<String> {
 }
 
 pub(crate) fn review_id_from_message(message: &str) -> Option<String> {
-    let url = review_url_from_message(message)?;
-    let review_id = url.rsplit('/').next()?;
+    review_id_from_url(&review_url_from_message(message)?)
+}
+
+pub(crate) fn review_id_from_url(url: &str) -> Option<String> {
+    let review_id = url.trim().trim_end_matches('/').rsplit('/').next()?;
     (!review_id.is_empty() && review_id.contains('-')).then(|| review_id.to_owned())
 }
 
@@ -805,6 +815,15 @@ mod tests {
     }
 
     #[test]
+    fn reads_review_id_from_a_cru_url() {
+        assert_eq!(
+            super::review_id_from_url("http://crucible/cru/COMMON-99"),
+            Some("COMMON-99".to_owned())
+        );
+        assert_eq!(super::review_id_from_url("http://crucible/cru/"), None);
+    }
+
+    #[test]
     fn writes_legacy_cru_metadata_idempotently() {
         let reviewers = vec!["alice".to_owned(), "bob".to_owned()];
         let first = managed_commit_message(
@@ -830,22 +849,27 @@ mod tests {
         let message = "\
 [TIC-10733] fix: fd leak
 
-[ branch: four-six ]
-[ target: origin/4.6 ]
-[ last_tag: None ]
+Summary:
+
+Reviewers: alice
+
+Reviewed By:
 
 Url: http://crucible/cru/LP-1476
 ";
-        let share = share_from_message(message, "origin/5.0").expect("share");
+        let share = share_from_message(message, "origin/4.6").expect("share");
         assert_eq!(share.target, "origin/4.6");
         assert_eq!(share.title, "[TIC-10733] fix: fd leak");
         assert_eq!(share.url, "http://crucible/cru/LP-1476");
-        let inferred = share_from_message(
-            "[TIC-10733] fix: fd leak\n\nUrl: http://crucible/cru/LP-1476\n",
-            "origin/4.6",
-        )
-        .expect("inferred");
-        assert_eq!(inferred.target, "origin/4.6");
+        assert_eq!(
+            share_from_message(
+                "[TIC-10733] fix: fd leak\n\n[ target: origin/4.6 ]\n\nUrl: http://crucible/cru/LP-1476\n",
+                "origin/5.0",
+            )
+            .expect("ignores target in commit")
+            .target,
+            "origin/5.0"
+        );
         assert_eq!(share_from_message("fix: no url", "origin/4.6"), None);
     }
 

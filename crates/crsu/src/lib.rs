@@ -160,7 +160,7 @@ enum Command {
     Copy {
         /// 作为合入目标显示的 Git ref；默认使用当前 upstream。
         base: Option<String>,
-        /// 按 JIRA 编号收集各分支已出评审的摘要，只读 git，不 checkout。
+        /// 按 JIRA 编号收集各分支已出评审的摘要；不 checkout。合入目标来自 upstream / 分支名；仍像功能分支时才读评审 description。
         #[arg(short, long, conflicts_with = "base")]
         jira: Option<String>,
         /// 只看这些 ref；可与 `--jira` 合用。逗号分隔。
@@ -771,7 +771,10 @@ fn copy_batch(
         None => log.time("git", || repository.review_shares_at_refs(branches)),
     };
     let shares = match shares {
-        Ok(shares) => shares,
+        Ok(mut shares) => {
+            overlay_copy_targets(repository, &mut shares);
+            shares
+        }
         Err(error) => {
             eprintln!("copy failed: {error}");
             return ExitCode::FAILURE;
@@ -792,6 +795,27 @@ fn copy_batch(
             eprintln!("clipboard failed: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn overlay_copy_targets(
+    repository: &git_repository::Repository,
+    shares: &mut [git_repository::ReviewShare],
+) {
+    let Ok(config) = crucible::configured() else {
+        return;
+    };
+    for share in shares {
+        if !git_repository::land_ref_key(&share.target).contains('/') {
+            continue;
+        }
+        let Some(review_id) = git_repository::review_id_from_url(&share.url) else {
+            continue;
+        };
+        let Some(target) = crucible::review_copy_target(&config, &review_id) else {
+            continue;
+        };
+        share.target = repository.prefer_origin_remote(&target);
     }
 }
 
