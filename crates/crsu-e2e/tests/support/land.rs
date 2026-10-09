@@ -12,12 +12,16 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 pub fn run(path: &Path) {
-    run_scenario(&load_yaml(path, "land scenario"));
+    run_scenario(load_yaml(path, "land scenario"));
 }
 
-fn run_scenario(scenario: &Scenario) {
+fn run_scenario(mut scenario: Scenario) {
     let repository = ScenarioRepository::create(&scenario.repository);
-    install_crsu_hooks(&repository.working_directory, &scenario.hooks);
+    install_crsu_hooks(repository.root.path(), &scenario.hooks);
+    let upstream_sha = repository.git_output([
+        "rev-parse",
+        &format!("origin/{}", scenario.repository.feature_branch),
+    ]);
     let config_home = TempDir::new().expect("isolate CRSU_CONFIG_HOME");
     install_global_hooks(config_home.path(), &scenario.global_hooks);
     let server = MockCrucible::start_land(&LandFixture {
@@ -48,18 +52,56 @@ fn run_scenario(scenario: &Scenario) {
     assert_scenario(&scenario.name, &output, &scenario.expect);
     let body = repository.git_output(["show", "-s", "--format=%b", "HEAD"]);
     assert_contains_all(&scenario.name, &body, &scenario.expect.head_body_contains);
+    if scenario.expect.success && !scenario.repository.upstream_files.is_empty() {
+        assert_eq!(
+            repository.git_output(["rev-parse", "HEAD^"]),
+            upstream_sha,
+            "scenario '{}' rebased onto the advanced upstream",
+            scenario.name,
+        );
+    }
+    if let Some(expected) = &mut scenario.expect.hook_json {
+        if expected["landed_sha"] == "$pushed_commit" {
+            expected["landed_sha"] = serde_json::json!(super::common::git_output(
+                repository.origin.path(),
+                [
+                    "rev-parse",
+                    &format!("refs/heads/{}", scenario.repository.feature_branch),
+                ],
+            ));
+        }
+        if expected["worktree_path"] == "$worktree_path" {
+            expected["worktree_path"] =
+                serde_json::json!(repository.git_output(["rev-parse", "--show-toplevel"]));
+        }
+    }
     assert_hooks(
         &scenario.name,
-        &repository.working_directory,
+        repository.root.path(),
         &scenario.expect,
         Some((server.base_url().as_str(), "http://crucible")),
     );
+    if !scenario.expect.success
+        && (scenario.hooks.contains_key("post-land")
+            || scenario.global_hooks.contains_key("post-land"))
+    {
+        assert!(
+            !repository
+                .root
+                .path()
+                .join(".git/crsu/hooks/captured.json")
+                .exists(),
+            "scenario '{}' must not run post-land after failure",
+            scenario.name,
+        );
+    }
     assert_no_token_leak(&scenario.name, &output, &scenario.crucible.token);
 }
 
 struct ScenarioRepository {
-    _repository: TempDir,
-    _origin: TempDir,
+    root: TempDir,
+    _worktree: Option<TempDir>,
+    origin: TempDir,
     working_directory: PathBuf,
 }
 
@@ -87,29 +129,71 @@ impl ScenarioRepository {
                 ),
             ],
         );
+        let (worktree, working_directory) = if specification.linked_worktree {
+            let worktree = TempDir::new().expect("create linked worktree directory");
+            run_git(
+                repository.path(),
+                [
+                    "worktree",
+                    "add",
+                    "-b",
+                    &specification.feature_branch,
+                    worktree.path().to_str().expect("worktree path is UTF-8"),
+                ],
+            );
+            let path = worktree.path().to_path_buf();
+            (Some(worktree), path)
+        } else {
+            run_git(
+                repository.path(),
+                ["checkout", "-b", &specification.feature_branch],
+            );
+            (None, repository.path().to_path_buf())
+        };
         run_git(
-            repository.path(),
-            ["checkout", "-b", &specification.feature_branch],
-        );
-        run_git(
-            repository.path(),
+            &working_directory,
             [
                 "branch",
                 "--set-upstream-to",
                 &format!("origin/{}", specification.feature_branch),
             ],
         );
-        write_files(repository.path(), &specification.feature_files);
-        run_git(repository.path(), ["add", "."]);
+        write_files(&working_directory, &specification.feature_files);
+        run_git(&working_directory, ["add", "."]);
         run_git(
-            repository.path(),
+            &working_directory,
             ["commit", "-m", specification.feature_message.as_str()],
         );
 
+        if !specification.upstream_files.is_empty() {
+            run_git(repository.path(), ["checkout", &specification.base_branch]);
+            write_files(repository.path(), &specification.upstream_files);
+            run_git(repository.path(), ["add", "."]);
+            run_git(repository.path(), ["commit", "-m", "upstream advances"]);
+            run_git(
+                repository.path(),
+                [
+                    "push",
+                    "origin",
+                    &format!(
+                        "{}:{}",
+                        specification.base_branch, specification.feature_branch
+                    ),
+                ],
+            );
+            if !specification.linked_worktree {
+                run_git(
+                    repository.path(),
+                    ["checkout", &specification.feature_branch],
+                );
+            }
+        }
+
         Self {
-            working_directory: repository.path().to_path_buf(),
-            _repository: repository,
-            _origin: origin,
+            working_directory,
+            root: repository,
+            _worktree: worktree,
+            origin,
         }
     }
 
@@ -151,6 +235,10 @@ struct Repository {
     feature_files: BTreeMap<String, String>,
     feature_message: String,
     origin: Origin,
+    #[serde(default)]
+    linked_worktree: bool,
+    #[serde(default)]
+    upstream_files: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]

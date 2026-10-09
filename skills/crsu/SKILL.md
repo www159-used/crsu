@@ -99,8 +99,10 @@ list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`lat
 可执行文件：`pre-diff`、`post-diff`、`pre-land`、`post-land`。全局在用户级 `hooks/`，项目 `.git/crsu/hooks/`（共享 git 目录，linked worktree 也能看到）。两层都跑，不互相覆盖。stdin 一段 JSON，`scope` 为 `global` 或 `project`。
 
 ```json
-{"version":1,"scope":"project","event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature"}
+{"version":1,"scope":"project","event":"post-land","command":"land","review_id":"LP-1478","url":"http://crucible/cru/LP-1478","branch":"feature","target":"origin/feature","landed_sha":"0123456789abcdef0123456789abcdef01234567","worktree_path":"/path/to/worktree"}
 ```
+
+`post-land` 的 `landed_sha` 是 rebase 后实际成功 push 的完整提交 SHA，不能用 pre-land 时的 HEAD 代替。`worktree_path` 是本次操作所在 worktree 的绝对路径，linked worktree 中指向该工作区，不是主仓目录。hook 可据此记录合入结果；本任务是否全部完成由 hook 的任务清单判断。
 
 `version` 是 hook 协议版本。多出来的键可以忽略；`version` 升了再按新合同解析。只在字段改义或删除时升版本。
 

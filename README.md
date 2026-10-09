@@ -49,6 +49,7 @@ crsu patches prune
 - `copy`：输出 `[target] title url` 并写入剪贴板。默认当前 HEAD；`--jira` 按提交里的 `Url:` 聚合各分支，只读、不 checkout。`[target]` 是合入目标（`@{upstream}` / 分支名；仍像功能分支时才读评审 description）。
 - `land`：将当前分支 rebase 到 upstream 后 push，并关闭已完成的 Crucible review（首版仅支持同分支、单个 commit；review 记录的 target 必须与即将 push 的分支一致，`-y` 跳过确认，`--force` 才能覆盖目标不一致）。评审已关闭或已放弃直接拒绝，不 rebase、不 push。
 - 命令 hook：可执行文件放在用户级 `hooks/` 和共享 git 目录的 `.git/crsu/hooks/`。两层都跑，不互相覆盖。`pre-*` 先全局后项目，非 0 退出则中止。`post-*` 先项目后全局，失败只警告，给外部做收尾（关 session、清 tab）。stdin 是一段 JSON（`version`、`scope`、`event`、`command`、`review_id`、`url` 等）。`version` 现为 `1`，字段改义或删除时才加一。
+  `post-land` 还提供 `landed_sha`（rebase 后实际成功 push 的完整提交 SHA）和 `worktree_path`（当前 worktree 的绝对路径）。它只在 push 和关闭评审均成功后触发；hook 可用这些字段记录合入结果，并按自己的任务清单判断是否收尾。
 - `comments`：从 Crucible 拉取或修改评审评论，stdout 输出稳定 JSON。省略 review id 时从 HEAD 的 `Url:` 读取。`reply` 回复一条评论；`edit` 改写自己的评论；`delete` / `rm` 删除自己的评论；`unresolve` 标成 Needs resolution；`resolve` 标成 Resolved；`defect` 标成缺陷；`undefect` 取消缺陷。Crucible 只允许改/删自己的评论。
 - `patches`：列出或删除评审上的过往 patch（`-na` / `diff` 每次追加的全量）。`list` 只输出元数据；`delete` 删指定块；`prune` 只留最新。挂着未删行内评论的 patch 会跳过，不挡整次清理。`diff` 不会自动 prune。
 
@@ -64,24 +65,28 @@ cp -R skills/crsu ~/.cursor/skills/crsu
 ## 开发
 
 ```bash
-cargo fmt
-cargo test
-cargo lint
-cargo rel
-cargo local-install
+make fmt
+make test
+make lint
+make build
+make install
 cargo run -- doctor
 cargo run -- init
 ```
 
-`lint` / `rel` / `local-install` 定义在 [`.cargo/config.toml`](.cargo/config.toml)。不要覆盖已有的 `cargo check`（类型检查）和 `cargo install`（装 crates.io 包）。多步门禁就是 `cargo fmt --check && cargo test && cargo lint`。
+开发入口定义在 [`Makefile`](Makefile)。`make` 默认执行 `make check`，依次检查格式、运行测试和 lint，任何一步失败即停止。`make build` 构建 release 版本；`make help` 查看可用目标。
 
 ## 安装
 
 ```bash
-cargo local-install
+make install
 ```
 
-默认装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。隔离目录把 `--root` 接在后面：
+默认装到 `${CARGO_HOME:-$HOME/.cargo}/bin/crsu`。指定安装目录：
+
+```bash
+make install INSTALL_ROOT=/path/to/install-root
+```
 
 补全脚本自己维护，按 Tab 时会再跑 `crsu complete` 拉分支、评审号、评论 id。zsh 用 `#compdef`，不要 `eval` / `source`：
 
@@ -89,10 +94,6 @@ cargo local-install
 crsu completions zsh --install
 crsu completions bash --install
 crsu completions fish --install
-```
-
-```bash
-cargo local-install --root /path/to/install-root
 ```
 
 声明式端到端场景在 `tests/e2e/**/*.yaml`；对应的 Rust runner 在

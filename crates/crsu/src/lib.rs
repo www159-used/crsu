@@ -1062,11 +1062,12 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
         log.finish("aborted");
         return ExitCode::SUCCESS;
     }
-    if let Err(error) = log.time("push", || {
+    let landed_sha = match log.time("push", || {
         repository.push_to_origin(&current, remote_branch)
     }) {
-        return land_failed(error);
-    }
+        Ok(landed_sha) => landed_sha,
+        Err(error) => return land_failed(error),
+    };
     println!("Pushed: {current} -> {upstream}");
     if let Err(error) = log.time("crucible_close", || {
         crucible::close_review(&config, &acceptance.review_id, &acceptance.state)
@@ -1086,6 +1087,8 @@ fn land(target: Option<&str>, yes: bool, force: bool) -> ExitCode {
                 "url": acceptance.review_url,
                 "branch": current,
                 "target": review_target,
+                "landed_sha": landed_sha,
+                "worktree_path": repository.work_tree(),
             }),
         );
     });

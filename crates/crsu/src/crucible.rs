@@ -1233,9 +1233,7 @@ fn apply_resolution(
     let post = resolution_post(target.parent, target.comment, &target.id, status);
     match post_resolution(config, review_id, &post) {
         Ok(()) => Ok(()),
-        Err(error)
-            if status == ResolutionStatus::Resolved && is_null_to_resolved(&error) =>
-        {
+        Err(error) if status == ResolutionStatus::Resolved && is_null_to_resolved(&error) => {
             post_resolution(
                 config,
                 review_id,

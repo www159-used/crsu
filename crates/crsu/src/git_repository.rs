@@ -311,9 +311,19 @@ impl Repository {
             .map(|_| ())
     }
 
-    pub fn push_to_origin(&self, local_branch: &str, remote_branch: &str) -> Result<(), Error> {
-        self.output(["push", "origin", &format!("{local_branch}:{remote_branch}")])
-            .map(|_| ())
+    /// Pushes a fixed source commit and returns its full SHA after success.
+    pub fn push_to_origin(&self, local_branch: &str, remote_branch: &str) -> Result<String, Error> {
+        let landed_sha = self.output([
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{local_branch}^{{commit}}"),
+        ])?;
+        self.output([
+            "push",
+            "origin",
+            &format!("{landed_sha}:refs/heads/{remote_branch}"),
+        ])?;
+        Ok(landed_sha)
     }
 
     pub fn head_oneline(&self) -> Result<String, Error> {

@@ -18,6 +18,9 @@ hooks:
     #!/bin/sh
     echo keep the tab open >&2
     exit 1
+  post-land: |
+    #!/bin/sh
+    cat > .git/crsu/hooks/captured.json
 crucible:
   project: COMMON
   token: test-token

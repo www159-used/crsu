@@ -404,7 +404,10 @@ fn assert_comments_script(fixture: &CommentsFixture, interactions: &[Interaction
                 interactions,
                 "POST",
                 &path,
-                &["resolutionStatus=UNRESOLVED", &format!("commentId={}", resolution.comment_id)],
+                &[
+                    "resolutionStatus=UNRESOLVED",
+                    &format!("commentId={}", resolution.comment_id),
+                ],
             );
         }
         let mut needles = vec![

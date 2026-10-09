@@ -1,22 +1,27 @@
-name: post-land hook receives the closed review
+name: global post-land reports the pushed commit and linked worktree after rebase
 repository:
   base_branch: main
   base_files:
     README.md: "base\n"
   feature_branch: feature
+  linked_worktree: true
   feature_files:
     README.md: "feature\n"
   feature_message: |-
     fix: land me
 
     Url: http://crucible/cru/COMMON-99
+  upstream_files:
+    UPSTREAM.md: "upstream advanced\n"
   origin:
     default_branch: main
 command: [land, --yes]
-hooks:
+global_hooks:
   post-land: |
     #!/bin/sh
-    cat > .git/crsu/hooks/captured.json
+    hook_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crsu/hooks"
+    mkdir -p "$hook_dir"
+    cat > "$hook_dir/captured.json"
 crucible:
   project: COMMON
   token: test-token
@@ -33,10 +38,11 @@ crucible:
 expect:
   success: true
   stdout_contains:
+    - "Pushed: feature -> origin/feature"
     - "Closed: COMMON-99"
   hook_json:
     version: 1
-    scope: project
+    scope: global
     event: post-land
     command: land
     review_id: COMMON-99
