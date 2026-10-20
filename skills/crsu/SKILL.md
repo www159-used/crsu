@@ -90,6 +90,9 @@ crsu patches                   # 默认从 HEAD 的 Url: 读 review id
 crsu patches list REVIEW_ID
 crsu patches delete 37473
 crsu patches prune
+crsu prune                    # 等同于 patches prune
+crsu pr                       # prune 的缩写
+crsu prune -r LP-1478          # 指定评审
 ```
 
 list 只有元数据：`id`、`source`、`file`、`uploaded`、`comments`、`latest`。正文不输出。`delete` / `prune` 返回 `deleted`、`kept`、`skipped`。`skipped.reason` 为 `has_comments` 时整次仍成功。id 用 `37473` 或 `PATCH:37473`。

@@ -10,7 +10,7 @@ _crsu() {
   cmd="${COMP_WORDS[1]}"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=($(compgen -W "init config cfg doctor doc status st diff df copy completions comp land ld comments cmt patches pt help" -- "${cur}"))
+    COMPREPLY=($(compgen -W "init config cfg doctor doc status st diff df copy completions comp land ld comments cmt patches pt prune pr help" -- "${cur}"))
     return
   fi
 
@@ -98,6 +98,16 @@ _crsu() {
             ;;
         esac
       fi
+      ;;
+    prune|pr)
+      case "${prev}" in
+        -r|--review)
+          COMPREPLY=($(compgen -W "$(_crsu_complete review-ids)" -- "${cur}"))
+          ;;
+        *)
+          COMPREPLY=($(compgen -W "-r --review -h --help" -- "${cur}"))
+          ;;
+      esac
       ;;
     patches|pt)
       if [[ ${COMP_CWORD} -eq 2 ]]; then

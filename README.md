@@ -32,6 +32,9 @@ crsu patches
 crsu patches list [REVIEW_ID]
 crsu patches delete PATCH_ID
 crsu patches prune
+crsu prune                     # patches prune 的快捷入口
+crsu pr                        # prune 的缩写
+crsu prune -r LP-1478          # 清理指定评审
 ```
 
 - `doctor`：只读检查当前 Git 仓库。

@@ -210,6 +210,13 @@ enum Command {
         #[command(subcommand)]
         command: Option<PatchesCommand>,
     },
+    /// 清理旧 patch，只留最新；等同于 `patches prune`，有评论的 patch 会跳过。
+    #[command(visible_alias = "pr")]
+    Prune {
+        /// Crucible review id；默认从 HEAD 提交的 `Url:` 读取。
+        #[arg(short, long, value_name = "REVIEW_ID")]
+        review: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -400,6 +407,7 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Land { target, yes, force } => land(target.as_deref(), yes, force),
         Command::Comments { command } => comments_command(command),
         Command::Patches { command } => patches_command(command),
+        Command::Prune { review } => patches_command(Some(PatchesCommand::Prune { review })),
     }
 }
 

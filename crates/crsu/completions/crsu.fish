@@ -16,6 +16,8 @@ complete -c crsu -n __fish_use_subcommand -a 'completions comp' -d '打印补全
 complete -c crsu -n __fish_use_subcommand -a 'land ld' -d '合入评审'
 complete -c crsu -n __fish_use_subcommand -a 'comments cmt' -d '评审评论'
 complete -c crsu -n __fish_use_subcommand -a 'patches pt' -d '评审 patch'
+complete -c crsu -n __fish_use_subcommand -a 'prune pr' -d '清理旧 patch'
+complete -c crsu -n '__fish_seen_subcommand_from prune pr' -s r -l review -xa '(__crsu_complete review-ids)'
 
 complete -c crsu -n '__fish_seen_subcommand_from init config cfg' -s g -l global
 

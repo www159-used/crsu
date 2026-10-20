@@ -44,6 +44,8 @@ _crsu() {
     'cmt:评审评论'
     'patches:评审 patch'
     'pt:评审 patch'
+    'prune:清理旧 patch'
+    'pr:清理旧 patch'
   )
   _arguments -C \
     '(-h --help)'{-h,--help}'[Print help]' \
@@ -99,6 +101,10 @@ _crsu() {
           ;;
         comments|cmt)
           _crsu_comments
+          ;;
+        prune|pr)
+          _arguments '(-r --review)'{-r,--review}'[review]:review:->reviews'
+          [[ $state == reviews ]] && _crsu_values review-ids
           ;;
         patches|pt)
           _crsu_patches
