@@ -4,6 +4,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
+use std::time::Duration;
+
+const PATCH_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct Client {
     http: reqwest::blocking::Client,
@@ -198,6 +201,23 @@ fn request_error(error: reqwest::Error) -> CrucibleError {
     CrucibleError::Request(error.without_url())
 }
 
+fn patch_upload_error(error: CrucibleError) -> CrucibleError {
+    if matches!(&error, CrucibleError::Request(source) if source.is_timeout()) {
+        CrucibleError::PatchUploadTimeout
+    } else {
+        error
+    }
+}
+
+fn upload_patch(request: reqwest::blocking::RequestBuilder) -> Result<String, CrucibleError> {
+    request
+        .timeout(PATCH_UPLOAD_TIMEOUT)
+        .send()
+        .map_err(request_error)
+        .and_then(response_body)
+        .map_err(patch_upload_error)
+}
+
 pub struct Submission {
     review_id: String,
     review_url: String,
@@ -276,12 +296,11 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
         payload["anchor"] = json!({"anchorRepository": repository});
     }
 
-    let response = config_request(&config, reqwest::Method::POST, "rest-service/reviews-v1")
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&payload)
-        .send()
-        .map_err(request_error)?;
-    let response = response_body(response)?;
+    let response = upload_patch(
+        config_request(&config, reqwest::Method::POST, "rest-service/reviews-v1")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&payload),
+    )?;
     let response = parse_json(&response)?;
 
     let review_id = response
@@ -1476,15 +1495,14 @@ fn update_review(
     if let Some(repository) = &config.repository {
         payload["anchor"] = json!({"anchorRepository": repository});
     }
-    let patch = config_request(
-        config,
-        reqwest::Method::POST,
-        &format!("rest-service/reviews-v1/{review_id}/patch"),
-    )
-    .json(&payload)
-    .send()
-    .map_err(request_error)?;
-    response_body(patch)?;
+    upload_patch(
+        config_request(
+            config,
+            reqwest::Method::POST,
+            &format!("rest-service/reviews-v1/{review_id}/patch"),
+        )
+        .json(&payload),
+    )?;
 
     let title = if current_title == review_diff.title() {
         None
@@ -1673,6 +1691,7 @@ pub enum CrucibleError {
         detail: String,
     },
     Request(reqwest::Error),
+    PatchUploadTimeout,
 }
 
 impl fmt::Display for CrucibleError {
@@ -1732,6 +1751,11 @@ impl fmt::Display for CrucibleError {
                 write!(formatter, "Crucible rejected request ({status}): {detail}")
             }
             Self::Request(error) => write!(formatter, "Crucible request failed: {error}"),
+            Self::PatchUploadTimeout => write!(
+                formatter,
+                "Crucible patch upload timed out ({}s timeout); the server may still be processing the patch. Check Crucible before retrying to avoid a duplicate review or patch",
+                PATCH_UPLOAD_TIMEOUT.as_secs()
+            ),
         }
     }
 }
@@ -1741,6 +1765,26 @@ mod tests {
     use super::{Client, CrucibleError};
     use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
+
+    #[test]
+    fn patch_upload_can_outlast_the_normal_request_timeout() {
+        let server = MockServer::start();
+        let patch = server.mock(|when, then| {
+            when.method(POST).path("/patch");
+            then.status(200)
+                .delay(std::time::Duration::from_millis(100))
+                .body("uploaded");
+        });
+        let http = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_millis(20))
+            .build()
+            .unwrap();
+
+        let response = super::upload_patch(http.post(server.url("/patch"))).unwrap();
+
+        assert_eq!(response, "uploaded");
+        patch.assert_hits(1);
+    }
 
     #[test]
     fn incomplete_configuration_points_at_init() {
