@@ -29,6 +29,8 @@ complete -c crsu -n '__fish_seen_subcommand_from config cfg; and __fish_seen_sub
 complete -c crsu -n '__fish_seen_subcommand_from status st' -a '(__crsu_complete review-ids)'
 
 complete -c crsu -n '__fish_seen_subcommand_from diff df' -s a -l attach -xa '(__crsu_complete review-ids)'
+complete -c crsu -n '__fish_seen_subcommand_from diff df' -o na -d '本次跳过 FishEye anchor'
+complete -c crsu -n '__fish_seen_subcommand_from diff df' -l no-anchor -d '本次跳过 FishEye anchor'
 complete -c crsu -n '__fish_seen_subcommand_from diff df' -s n -l new
 complete -c crsu -n '__fish_seen_subcommand_from diff df' -s y -l yes
 complete -c crsu -n '__fish_seen_subcommand_from diff df' -s f -l force

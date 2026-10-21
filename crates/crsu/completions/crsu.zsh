@@ -70,6 +70,8 @@ _crsu() {
         diff|df)
           _arguments \
             '(-a --attach)'{-a,--attach}'[attach review]:review:->reviews' \
+            '-na[skip FishEye anchor for this upload]' \
+            '--no-anchor[skip FishEye anchor for this upload]' \
             '(-n --new)'{-n,--new}'[force new review]' \
             '(-y --yes)'{-y,--yes}'[skip confirm]' \
             '(-f --force)'{-f,--force}'[allow large patch]' \

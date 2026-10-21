@@ -327,6 +327,27 @@ impl MockCrucible {
             .expect("review was not created")
     }
 
+    /// Returns JSON payloads of patch uploads, including review creation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an upload body is not valid JSON or the interaction lock is poisoned.
+    #[must_use]
+    pub fn patch_uploads(&self) -> Vec<serde_json::Value> {
+        self.shared
+            .interactions
+            .lock()
+            .expect("interactions lock")
+            .iter()
+            .filter(|request| {
+                request.method == "POST"
+                    && (request.path == "/rest-service/reviews-v1"
+                        || request.path.ends_with("/patch"))
+            })
+            .map(|request| serde_json::from_str(&request.body).expect("patch JSON"))
+            .collect()
+    }
+
     /// Asserts that the fixture's expected mutation occurred.
     ///
     /// # Panics

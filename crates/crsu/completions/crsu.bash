@@ -41,7 +41,7 @@ _crsu() {
           ;;
         *)
           if [[ ${cur} == -* ]]; then
-            COMPREPLY=($(compgen -W "-a --attach -n --new -y --yes -f --force -h --help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "-a --attach -n --new --no-anchor -na -y --yes -f --force -h --help" -- "${cur}"))
           else
             COMPREPLY=($(compgen -W "$(_crsu_complete refs)" -- "${cur}"))
           fi

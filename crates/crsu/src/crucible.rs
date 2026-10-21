@@ -266,8 +266,17 @@ impl Submission {
     }
 }
 
-pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submission>, CrucibleError> {
-    let Some(config) = Config::from_environment()? else {
+#[derive(Clone, Copy)]
+pub enum AnchorMode {
+    Configured,
+    Disabled,
+}
+
+pub fn submit_if_configured(
+    review_diff: &ReviewDiff,
+    anchor: AnchorMode,
+) -> Result<Option<Submission>, CrucibleError> {
+    let Some(config) = Config::for_submission(anchor)? else {
         return Ok(None);
     };
     config.validate_anchor()?;
@@ -336,8 +345,11 @@ pub fn submit_if_configured(review_diff: &ReviewDiff) -> Result<Option<Submissio
 /// # Errors
 ///
 /// Returns configuration or anchor-validation errors before the caller prompts.
-pub fn submit_confirmation(review_diff: &ReviewDiff) -> Result<Option<String>, CrucibleError> {
-    let Some(config) = Config::from_environment()? else {
+pub fn submit_confirmation(
+    review_diff: &ReviewDiff,
+    anchor: AnchorMode,
+) -> Result<Option<String>, CrucibleError> {
+    let Some(config) = Config::for_submission(anchor)? else {
         return Ok(None);
     };
     config.validate_anchor()?;
@@ -1570,6 +1582,16 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    fn for_submission(anchor: AnchorMode) -> Result<Option<Self>, CrucibleError> {
+        Ok(Self::from_environment()?.map(|mut config| {
+            if matches!(anchor, AnchorMode::Disabled) {
+                config.repository = None;
+                config.repository_location = None;
+            }
+            config
+        }))
+    }
+
     fn from_environment() -> Result<Option<Self>, CrucibleError> {
         let url = env::var("CRSU_CRUCIBLE_URL").ok();
         let project = env::var("CRSU_CRUCIBLE_PROJECT").ok();

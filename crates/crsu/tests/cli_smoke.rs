@@ -47,17 +47,23 @@ fn version_flag_prints_package_version() {
 }
 
 #[test]
-fn diff_new_cannot_be_combined_with_attach() {
-    let output = crsu()
-        .args(["diff", "--new", "--attach", "COMMON-123"])
-        .output()
-        .expect("reject conflicting review actions");
+fn diff_upload_options_cannot_be_combined_with_attach() {
+    for option in ["--new", "--no-anchor", "-na"] {
+        let output = crsu()
+            .args(["diff", option, "--attach", "COMMON-123"])
+            .output()
+            .expect("reject conflicting review actions");
 
-    assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8(output.stderr).expect("UTF-8 error");
-    assert!(stderr.contains("--new"));
-    assert!(stderr.contains("--attach"));
-    assert!(stderr.contains("cannot be used with"));
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).expect("UTF-8 error");
+        assert!(stderr.contains(if option == "-na" {
+            "--no-anchor"
+        } else {
+            option
+        }));
+        assert!(stderr.contains("--attach"));
+        assert!(stderr.contains("cannot be used with"));
+    }
 }
 
 #[test]
@@ -532,4 +538,88 @@ fn land_rejects_cross_branch_targets() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 error");
     assert!(stderr.contains("cross-branch land"));
+}
+
+#[test]
+fn diff_no_anchor_bypasses_invalid_anchor_for_create_and_update_without_changing_config() {
+    use crsu_testkit::{MockCrucible, ReviewFixture, ReviewResponse};
+    let repository = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    git(repository.path(), &["init", "-b", "main", "-q"]);
+    git(repository.path(), &["config", "user.name", "Test"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "t@example.com"],
+    );
+    git(
+        repository.path(),
+        &["commit", "--allow-empty", "-m", "base", "-q"],
+    );
+    git(repository.path(), &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repository.path().join("file"), "change\n").unwrap();
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-m", "feature", "-q"]);
+    let config_dir = repository.path().join(".git/crsu");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let config_path = config_dir.join("config.toml");
+    for update in [false, true] {
+        let server = MockCrucible::start_review(ReviewFixture {
+            token: "secret".into(),
+            predecessor: None,
+            response: if update {
+                ReviewResponse::Updated {
+                    review_id: "LP-1".into(),
+                    current_title: "old title".into(),
+                    current_objectives: "old objectives".into(),
+                    current_state: "Review".into(),
+                }
+            } else {
+                ReviewResponse::Created {
+                    review_id: "LP-1".into(),
+                }
+            },
+        });
+        let config = format!(
+            "schema_version = 2\n[crucible]\nurl = {:?}\ntoken = \"secret\"\nproject = \"LP\"\nrepository = \"broken\"\nrepository_location = \"ssh://wrong/repo.git\"\n",
+            server.base_url()
+        );
+        std::fs::write(&config_path, &config).unwrap();
+        let run = |no_anchor| {
+            let mut command = crsu();
+            command
+                .current_dir(repository.path())
+                .env("CRSU_CONFIG_HOME", home.path())
+                .env("CRSU_NO_CLIPBOARD", "1")
+                .args(["diff", "main", "-y"]);
+            for key in [
+                "URL",
+                "PROJECT",
+                "TOKEN",
+                "REPOSITORY",
+                "REPOSITORY_LOCATION",
+                "REVIEWERS",
+            ] {
+                command.env_remove(format!("CRSU_CRUCIBLE_{key}"));
+            }
+            if no_anchor {
+                command.arg(if update { "-na" } else { "--no-anchor" });
+            }
+            command.output().unwrap()
+        };
+        let output = run(true);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        server.assert_review_request();
+        let uploads = server.patch_uploads();
+        assert_eq!(uploads.len(), 1);
+        assert!(uploads[0].get("anchor").is_none(), "{uploads:?}");
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), config);
+        let output = run(false);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("no origin remote"));
+        assert_eq!(server.patch_uploads().len(), 1);
+    }
 }

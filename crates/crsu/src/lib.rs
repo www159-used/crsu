@@ -149,6 +149,9 @@ enum Command {
         /// 忽略 HEAD 中的旧 Url，新建评审并替换关联；适用于 cherry-pick 后出评审。
         #[arg(short, long, conflicts_with = "attach")]
         new: bool,
+        /// 本次上传不使用 `FishEye` anchor，不修改配置；兼容 -na。
+        #[arg(long, conflicts_with = "attach")]
+        no_anchor: bool,
         /// 跳过提交 patch 前的确认提示。
         #[arg(short = 'y', long = "yes")]
         yes: bool,
@@ -386,7 +389,19 @@ pub fn run(cli: Cli) -> ExitCode {
             new,
             yes,
             force,
-        } => diff(base.as_deref(), attach.as_deref(), new, yes, force),
+            no_anchor,
+        } => diff(
+            base.as_deref(),
+            attach.as_deref(),
+            new,
+            yes,
+            force,
+            if no_anchor {
+                crucible::AnchorMode::Disabled
+            } else {
+                crucible::AnchorMode::Configured
+            },
+        ),
         Command::Copy {
             base,
             jira,
@@ -552,7 +567,14 @@ fn load_editable_config(
     }
 }
 
-fn diff(base: Option<&str>, attach: Option<&str>, new: bool, yes: bool, force: bool) -> ExitCode {
+fn diff(
+    base: Option<&str>,
+    attach: Option<&str>,
+    new: bool,
+    yes: bool,
+    force: bool,
+    anchor: crucible::AnchorMode,
+) -> ExitCode {
     let mut log = crate::log::CommandLog::start("diff");
     let repository = match git_repository::Repository::discover() {
         Ok(repository) => repository,
@@ -599,7 +621,7 @@ fn diff(base: Option<&str>, attach: Option<&str>, new: bool, yes: bool, force: b
         eprintln!("diff failed: {error}");
         return ExitCode::FAILURE;
     }
-    match crucible::submit_confirmation(&review_diff) {
+    match crucible::submit_confirmation(&review_diff, anchor) {
         Ok(None) => {}
         Ok(Some(prompt)) => {
             if !yes && !log.time("wait", || confirm_yes(&prompt)) {
@@ -607,7 +629,9 @@ fn diff(base: Option<&str>, attach: Option<&str>, new: bool, yes: bool, force: b
                 log.finish("aborted");
                 return ExitCode::SUCCESS;
             }
-            match log.time("crucible", || crucible::submit_if_configured(&review_diff)) {
+            match log.time("crucible", || {
+                crucible::submit_if_configured(&review_diff, anchor)
+            }) {
                 Ok(Some(submission)) => {
                     println!("Review: {}", submission.review_id());
                     if let Some((previous, current)) = submission.title_update() {
